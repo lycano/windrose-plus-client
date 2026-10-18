@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Windrose+ Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* hidden must win over the display rules below (Artifact hosts add this; a standalone page needs it here) */
+[hidden] { display: none !important; }
+/* Layout: one column — the game screen with the console as the hero, the status board below it.
+   Single dark look on purpose: the colors are the console's own palette (WindroseClientProxy README), so the page and
+   the mockup read as one instrument. Keep the --c-* tokens in sync with console_ui.cpp (the state's palette check). */
+:root {
+  color-scheme: dark;
+  /* console palette (console_ui.cpp) */
+  --c-window: rgba(28, 28, 33, .94);   /* #1C1D21 @94% */
+  --c-frame: rgba(23, 25, 28, .95);    /* #18191D */
+  --c-sunken: rgba(18, 20, 23, .95);   /* #131417 */
+  --c-border: rgba(61, 66, 74, .85);   /* #3E424B */
+  --c-sep: rgba(46, 48, 54, .85);      /* #2E3036 */
+  --c-text: #9DA0A8;
+  --c-input: #A5A9B2;
+  --c-server: #BAA57A;
+  --c-muted: #5F636E;
+  --c-cmd: #58C2A2;
+  --c-notice: #D8A053;
+  --c-error: #CE4D4F;
+  --c-banner: rgba(70, 72, 81, .85);
+  --c-scanner: #AB2A28;
+  --c-row-sel: #2A2D34;
+  --c-burger: #B8AF98;
+  /* page */
+  --bg: #0E0F12;
+  --surface: #16171B;
+  --line: #2A2C33;
+  --fg: #C9CBD1;
+  --fg-dim: #7C808B;
+  --ok: #58C2A2;
+  --warn: #D8A053;
+  --bad: #CE4D4F;
+  --f-ui: "IBM Plex Sans Condensed", "Roboto Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font: 15px/1.5 var(--f-ui);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 22px; }
+header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; }
+h1 { margin: 0; font-size: 1.55rem; font-weight: 600; letter-spacing: .01em; text-wrap: balance; }
+h1 span { color: var(--c-server); }
+.stamp { font: 12.5px var(--f-mono); color: var(--fg-dim); }
+.proposal { border: 1px dashed var(--warn); color: var(--warn); padding: 6px 12px; border-radius: 3px; font-size: 13.5px; }
+h2 { margin: 0 0 10px; font-size: .78rem; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--fg-dim); }
+
+/* ---- game screen + console ---- */
+.screen {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; min-height: 440px; overflow: hidden; border-radius: 4px;
+  border: 1px solid var(--line);
+  background:
+    radial-gradient(120% 70% at 70% 0%, rgba(210, 170, 110, .30), transparent 60%),
+    linear-gradient(180deg, #45566A 0%, #6F7F8C 46%, #2D4756 47%, #1B3241 70%, #0F2230 100%);
+}
+.screen .hud { position: absolute; left: 14px; bottom: 12px; font: 12px var(--f-mono); color: rgba(255,255,255,.55); }
+.console {
+  position: absolute; left: 0; right: 0; top: 0; height: 45%;
+  background: var(--c-window); border: 1px solid var(--c-border); border-radius: 3px;
+  padding: 8px; display: flex; flex-direction: column; gap: 4px;
+  font: var(--c-font-size, 16px)/1.38 var(--f-mono); color: var(--c-input);
+  transform: translateY(-101%); transition: transform 133ms linear; /* anim_speed 7.5 → ~130 ms */
+}
+.console.open { transform: translateY(0); }
+.c-head { white-space: nowrap; overflow: hidden; display: flex; align-items: flex-end; gap: 6px; min-height: 2.1em; margin-bottom: -4px; } /* tabs sit on the content border */
+.c-head .t, .c-head > .h { align-self: center; }
+.c-head .tabs { display: flex; gap: 3px; align-self: stretch; align-items: flex-end; }
+.c-head .t { color: var(--c-server); } .c-head .h { color: var(--c-muted); } .c-head .ctx { color: var(--c-cmd); }
+.c-sep { height: 1px; background: var(--c-sep); flex: none; }
+/* tabs (console_ui.cpp header): outline top / left / right, the active one joins the region below (no border under it) */
+.tab { font: inherit; color: var(--c-muted); background: #18191D; border: 1px solid var(--c-border); border-bottom: 0; border-radius: 2px 2px 0 0;
+       padding: .25em .9em; margin-bottom: -1px; cursor: pointer; position: relative; z-index: 1; }
+.tab:hover { color: #7FA89A; background: #2A2D34; } /* dim seafoam: less than the active tab */
+.tab.on { color: var(--c-cmd); background: var(--c-sunken); box-shadow: inset 0 1px 0 rgba(88,194,162,.78); }
+/* Servers view (console_ui.cpp RenderServersView): chips, table, status, details, inline password */
+.sv { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 3px; background: var(--c-sunken); border: 1px solid var(--c-border); padding: 4px 8px; }
+.sv-bar { display: flex; gap: 6px; align-items: center; white-space: nowrap; overflow: hidden; color: var(--c-muted); }
+.chip { font: inherit; color: var(--c-muted); background: #18191D; border: 1px solid var(--c-border); border-radius: 2px; padding: 0 .5em; cursor: pointer; }
+.chip:hover { background: #2A2D34; color: var(--c-server); } .chip.on { color: var(--c-cmd); background: var(--c-row-sel); } .chip.on:hover { color: #7FE0C2; }
+.tbl-wrap { flex: 1 1 auto; min-height: 48px; overflow: auto; }
+table.tbl { width: 100%; border-collapse: collapse; white-space: nowrap; }
+.tbl th { position: sticky; top: 0; background: #1E2025; color: var(--c-server); font-weight: 400; text-align: left; padding: 1px 8px; cursor: pointer; user-select: none; border-right: 1px solid var(--c-sep); }
+.tbl th.ns { cursor: default; }
+.tbl td { padding: 0 8px; color: var(--c-muted); border-right: 1px solid var(--c-sep); }
+.tbl tbody tr:nth-child(even) { background: rgba(255,255,255,.025); }
+.tbl tbody tr { cursor: pointer; } .tbl tbody tr:hover { background: #2A2D34; } .tbl th:not(.ns):hover { background: #2A2D34; }
+.tbl tbody tr.sel { background: #23262C; }
+.tbl td.nm { color: var(--c-input); } .tbl tr.sel td.nm, .tbl tr.sel td.no { color: var(--c-cmd); } .tbl td.fav { color: var(--c-notice); } .tbl td.tx { color: var(--c-text); }
+.sv-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sv-det { display: flex; gap: 8px; align-items: center; white-space: nowrap; overflow: hidden; }
+.sv-det .k { color: var(--c-cmd); } .sv-det .v { color: var(--c-input); } .sv-det .m { color: var(--c-muted); overflow: hidden; text-overflow: ellipsis; } .sv-det .sp { flex: 1; }
+.btn { font: inherit; color: var(--c-input); background: #18191D; border: 1px solid var(--c-border); border-radius: 2px; padding: .1em .9em; cursor: pointer; }
+/* RoleButton (console_ui.cpp): hover lightens the background and shifts the text by role */
+.btn:hover { background: #2A2D34; color: var(--c-server); } .btn:active { background: #33363E; }
+.btn.fav:hover { color: var(--c-notice); } .btn.del:hover, .btn.warn { color: var(--c-error); }
+.btn.go, .btn.on { color: var(--c-cmd); } .btn.go:hover, .btn.on:hover { color: #7FE0C2; } .btn.on { background: var(--c-row-sel); }
+.sv-pw { display: flex; gap: 8px; align-items: center; min-height: 1.6em; } .sv-pw.off > * { visibility: hidden; } /* row always reserved: the table never jumps */ .sv-pw span { color: var(--c-notice); white-space: nowrap; }
+.sv-pw input { width: 220px; max-width: 40%; height: 21px; background: var(--c-frame); color: var(--c-input); border: 1px solid var(--c-border); border-radius: 2px; font: inherit; padding: 0 6px; outline: none; }
+/* /ui view (console_ui.cpp RenderUiView) */
+.uv { flex: 1 1 auto; min-height: 0; overflow: auto; background: var(--c-sunken); border: 1px solid var(--c-border); padding: 4px 8px; display: flex; flex-direction: column; gap: 3px; }
+.uv .hd { color: var(--c-server); } .uv .m { color: var(--c-muted); } .uv .tx { color: var(--c-text); }
+.uv table { border-collapse: collapse; white-space: nowrap; } .uv td { padding: 1px 8px; border-right: 1px solid var(--c-sep); }
+.uv tr:hover { background: #2A2D34; } .uv tr.sel { background: #23262C; } /* one row style (PushRowColors): hover #2A2D34, selected darker */ .uv tr.sel td.k, .uv tr.sel td.v { color: var(--c-cmd); } .uv tr { cursor: pointer; }
+.uv td.k { color: var(--c-input); } .uv td.v { color: var(--c-text); }
+.uv .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.helpdim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.6); } /* ImGui ModalWindowDimBg */
+.helpov { position: absolute; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%); background: var(--c-frame); border: 1px solid var(--c-border); border-radius: 2px; padding: 6px 12px; white-space: pre; box-shadow: 0 6px 18px rgba(0,0,0,.45); max-width: 96%; overflow: auto; }
+.ctxm { position: absolute; z-index: 5; background: var(--c-frame); border: 1px solid var(--c-border); border-radius: 2px; padding: 3px 0; min-width: 190px; box-shadow: 0 6px 18px rgba(0,0,0,.45); }
+.ctxm div { padding: 1px 12px; cursor: pointer; color: var(--c-input); } .ctxm div:hover { background: var(--c-row-sel); color: var(--c-server); }
+.ctxm div.go:hover { color: #7FE0C2; } .ctxm div.fav:hover { color: var(--c-notice); } .ctxm div.del:hover { color: var(--c-error); }
+.ctxm .sepl { height: 1px; background: var(--c-sep); margin: 3px 0; padding: 0; }
+.c-log { flex: 1 1 auto; min-height: 40px; overflow: auto; background: var(--c-sunken); border: 1px solid var(--c-border); border-radius: 0; padding: 4px 8px; white-space: pre; }
+.c-log div { min-height: 1.38em; }
+.l-cmd { color: var(--c-cmd); } .l-server { color: var(--c-server); } .l-notice { color: var(--c-notice); }
+.l-info, .l-text { color: var(--c-text); } .l-error { color: var(--c-error); } .l-banner { color: var(--c-banner); }
+.c-pal { flex: none; max-height: min(30%, 200px); overflow-y: scroll; background: var(--c-frame); border: 1px solid var(--c-border); border-radius: 2px; padding: 4px 8px; }
+.c-pal .ph { white-space: nowrap; } .c-pal .ph b { color: var(--c-server); font-weight: 400; } .c-pal .ph i { color: var(--c-muted); font-style: normal; }
+.c-pal .row { white-space: nowrap; cursor: pointer; padding: 1px 0; }
+.c-pal .row:hover { background: rgba(33, 36, 41, .85); }
+.c-pal .row.sel { background: var(--c-row-sel); }
+.c-pal .row .n { color: var(--c-input); } .c-pal .row.sel .n { color: var(--c-input); }
+.c-pal .row .u { color: rgba(165,169,178,.85); } .c-pal .row .d { color: var(--c-muted); }
+.c-pal .row.sub .n { color: var(--c-cmd); padding-left: 2.5ch; } .c-pal .row .plus { color: var(--c-notice); opacity: .9; }
+.c-syn { flex: none; background: var(--c-sunken); border: 1px solid var(--c-sep); border-radius: 2px; padding: 3px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c-syn .k { color: var(--c-cmd); } .c-syn .u { color: var(--c-input); } .c-syn .d, .c-syn .x { color: var(--c-muted); } .c-syn .x { opacity: .75; }
+.c-scan { flex: none; height: 2px; background: rgba(30,32,36,.7); position: relative; overflow: hidden; }
+.c-scan::after { content: ""; position: absolute; top: 0; bottom: 0; width: 28%; background: var(--c-scanner); border-radius: 1px; animation: scan 1.54s ease-in-out infinite alternate; }
+@keyframes scan { from { left: 0; } to { left: 72%; } }
+.c-input { flex: none; display: flex; align-items: center; gap: 8px; }
+.burger { flex: none; width: 27px; height: 23px; background: #17191C; border: 1px solid rgba(62,66,75,.85); border-radius: 2px; display: grid; place-content: center; gap: 3px; cursor: pointer; padding: 0; }
+.burger i { display: block; width: 15px; height: 1.8px; background: var(--c-burger); }
+.burger:hover, .burger.on { border-color: rgba(88,194,162,.86); background: #24262C; }
+.burger:hover i, .burger.on i { background: #DCA052; }
+.dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c-cmd); }
+.dot.busy { animation: pulse .78s ease-in-out infinite alternate; }
+@keyframes pulse { from { background: #F59E0B; } to { background: #F5C60B; } }
+.prompt { color: var(--c-cmd); white-space: nowrap; }
+#cin { flex: 1; min-width: 0; height: 23px; background: var(--c-frame); color: var(--c-input); border: 1px solid var(--c-border); border-radius: 2px; font: inherit; padding: 0 6px; outline: none; }
+#cin:focus { background: rgba(36,38,44,.95); }
+/* another input box has the keyboard: the command line is dim, no outline (console_ui.cpp dim_line) */
+.c-input.dim .prompt, .c-input.dim #cin { color: rgba(95,99,110,.55); }
+#cin::selection { background: rgba(88,194,162,.35); }
+
+/* ---- controls ---- */
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.controls button, .controls select {
+  font: 500 13.5px var(--f-ui); color: var(--fg); background: var(--surface); border: 1px solid var(--line);
+  border-radius: 3px; padding: 6px 11px; cursor: pointer;
+}
+.controls button:hover, .controls select:hover { border-color: var(--c-cmd); }
+.controls button:focus-visible, .controls select:focus-visible, .burger:focus-visible, .row:focus-visible { outline: 2px solid var(--c-cmd); outline-offset: 1px; }
+.controls kbd { font: 12px var(--f-mono); color: var(--c-server); }
+.controls .sp { flex: 1; }
+.keys { font: 12.5px var(--f-mono); color: var(--fg-dim); }
+
+/* ---- status board ---- */
+.board { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; min-width: 0; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 14px; }
+.kv dt { color: var(--fg-dim); } .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.mono { font-family: var(--f-mono); font-size: 12.5px; }
+.pill { display: inline-block; font: 600 11.5px var(--f-ui); letter-spacing: .06em; text-transform: uppercase; padding: 1px 7px; border-radius: 9px; border: 1px solid currentColor; }
+.ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .dim { color: var(--fg-dim); }
+.big { font: 500 1.6rem var(--f-mono); color: var(--c-server); }
+.items { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 14px; }
+.items li { display: grid; grid-template-columns: 4.2em 6.6em 1fr; gap: 8px; align-items: baseline; }
+.items li.sub { padding-left: 1.2em; }
+.items .id { font: 12.5px var(--f-mono); color: var(--c-server); }
+.items .note { color: var(--fg-dim); font-size: 12.5px; }
+.sw { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 6px 12px; font-size: 13px; }
+.sw div { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.sw span.chip { flex: none; width: 18px; height: 18px; border-radius: 2px; border: 1px solid var(--line); }
+.sw .r { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wide { grid-column: 1 / -1; }
+@media (prefers-reduced-motion: reduce) { .console { transition: none; } .c-scan::after, .dot.busy { animation: none; } }
+@media (max-width: 560px) { .items li { grid-template-columns: 3.6em 1fr; } .items li .note { grid-column: 2; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <h1><span>Windrose+</span> In-Game Console</h1>
+    <div class="stamp" id="stamp"></div>
+  </header>
+  <div class="proposal" id="proposal" hidden></div>
+
+  <section>
+    <div class="screen" id="screen">
+      <div class="console" id="console" aria-label="Console mockup">
+        <div class="c-head"><span class="t" id="ctitle"></span><span class="tabs"><button class="tab" id="tabWp">/wp</button><button class="tab" id="tabSv">/connect</button><button class="tab" id="tabUi">/ui</button><button class="tab" id="tabInfo">/info</button><button class="tab" id="tabUpd">/update</button></span><span class="h" id="chint"></span></div>
+        <div class="c-log" id="clog"></div>
+        <div class="sv" id="sv" hidden>
+          <div class="sv-bar"><button class="chip" data-f="0">All</button><button class="chip" data-f="1">Favorites</button><button class="chip" data-f="2">Recent</button><span id="svcount"></span><span>| Up/Down: select | Shift+Up/Down: history | Enter / double-click: connect | right-click: more | ?: keys</span></div>
+          <div class="tbl-wrap" id="tblwrap"><table class="tbl"><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
+          <div class="sv-status" id="svstatus"></div>
+          <div class="sv-det" id="svdet"></div>
+          <div class="sv-pw off" id="svpw"><span id="svpwl"></span><input id="svpwin" type="password" aria-label="Server password"><button class="btn" id="svpwshow">Show</button><button class="btn go" id="svpwok">Store</button><button class="btn del" id="svpwclr">Clear</button><button class="btn" id="svpwno">Cancel</button></div>
+        </div>
+        <div class="uv" id="uv" hidden></div>
+        <div class="uv" id="iv" hidden></div>
+        <div class="uv" id="updv" hidden></div>
+        <div class="ctxm" id="ctxm" hidden></div>
+        <div class="helpdim" id="helpdim" hidden></div>
+        <div class="helpov" id="help" hidden></div>
+        <div class="c-pal" id="cpal" hidden></div>
+        <div class="c-syn" id="csyn" hidden></div>
+        <div class="c-scan" id="cscan" hidden></div>
+        <div class="c-sep"></div>
+        <div class="c-input">
+          <button class="burger" id="burger" title="Open Command Palette / Directory" aria-label="Command directory"><i></i><i></i><i></i></button>
+          <span class="dot" id="cdot" title="Server connected &amp; ready."></span>
+          <span class="prompt" id="cprompt">&gt;</span>
+          <input id="cin" autocomplete="off" spellcheck="false" aria-label="Console input">
+        </div>
+      </div>
+      <div class="hud">Windrose · client view (mock)</div>
+    </div>
+  </section>
+
+  <div class="controls">
+    <button id="bToggle"><kbd>F10</kbd> Toggle</button>
+    <select id="selCat" aria-label="Command catalog"></select>
+    <button id="bExec">Executing</button>
+    <button id="bNotice">[Notice]</button>
+    <button id="bError">[Error]</button>
+    <button id="bClear">Reset log</button>
+    <span class="sp"></span>
+    <span class="keys">Tab cycle · ↑↓ history/palette · → select · Esc hide/close</span>
+  </div>
+
+  <section class="board" id="board"></section>
+</div>
+
+<script>
+const STATE = {"generated": "2026-10-18T22:34:29", "client": {"version": "1.4.0-dev.35+ddf786c", "commit": null, "branch": null, "dirty": [], "build": null, "local_install": null}, "ui": {"title": "WINDROSE+ IN-GAME ADMIN CONSOLE", "hint": "| Toggle: F10 | Close: ESC", "banner": ["===============================================================================", " Windrose+ In-Game Admin Console", " Type 'wp.help' for command directory, 'wp.client ping' to check the server.", "==============================================================================="], "default_catalog": [{"name": "wp.version", "usage": "wp.version", "desc": "Show client/server version and build", "admin": false}, {"name": "wp.client", "usage": "wp.client <schema|ping>", "desc": "In-game console: command list, reachability check", "admin": false}, {"name": "wp.client schema", "usage": "[protocol]", "desc": "Command list from the server (needs a server)", "admin": false}, {"name": "wp.client ping", "usage": "", "desc": "Reachability check", "admin": false}, {"name": "wp.help", "usage": "wp.help [command]", "desc": "Directory of available commands", "admin": false}, {"name": "/connect", "usage": "/connect", "desc": "Server manager: Direct IP servers, join, favorites (local, never sent to the server)", "admin": false}, {"name": "/quit", "usage": "/quit", "desc": "Close the game, like Alt+F4 (local)", "admin": false}, {"name": "/info", "usage": "/info", "desc": "Client logo, version and the loaded settings (local)", "admin": false}, {"name": "/update", "usage": "/update", "desc": "Client version and server update hint (view); install the signed update / go back (local)", "admin": false}, {"name": "/ui", "usage": "/ui", "desc": "Console zoom (13 / 20 / 26 px text) and height, saved in WindroseClient.ini (local)", "admin": false}], "connect_catalog": [{"name": "list", "usage": "list", "desc": "Known servers, favorites first (#n)", "admin": false}, {"name": "open", "usage": "open <#n|name|ip[:port]> [password]", "desc": "Join a server (from a world: back to the main menu first)", "admin": false}, {"name": "close", "usage": "close", "desc": "Leave this world for the main menu", "admin": false}, {"name": "add", "usage": "add <ip[:port]> [name]", "desc": "Remember a server (port 7777 if left out)", "admin": false}, {"name": "name", "usage": "name <#n> <name>", "desc": "Rename a server", "admin": false}, {"name": "pass", "usage": "pass <#n> [password|-|show]", "desc": "Store a password; - clears it; no value / show: password field (show = unmasked)", "admin": false}, {"name": "fav", "usage": "fav <#n>", "desc": "Toggle favorite", "admin": false}, {"name": "remove", "usage": "remove <#n>", "desc": "Forget a server", "admin": false}, {"name": "/wp", "usage": "/wp", "desc": "Back to the Windrose+ console", "admin": false}, {"name": "/quit", "usage": "/quit", "desc": "Close the game, like Alt+F4", "admin": false}, {"name": "/ui", "usage": "/ui", "desc": "Console zoom and height", "admin": false}, {"name": "/info", "usage": "/info", "desc": "Client logo, version and the loaded settings", "admin": false}, {"name": "/update", "usage": "/update", "desc": "Client version, server update hint, install / roll back", "admin": false}], "ui_catalog": [{"name": "zoom", "usage": "zoom 1|1.5|2", "desc": "13 / 20 / 26 px text, spacing follows (pixel fonts are only sharp at these)", "admin": false}, {"name": "height", "usage": "height <0.25-0.9>", "desc": "Share of the screen height the console covers", "admin": false}, {"name": "reload", "usage": "reload", "desc": "Read WindroseClient.ini again", "admin": false}, {"name": "/wp", "usage": "/wp", "desc": "Back to the Windrose+ console", "admin": false}, {"name": "/connect", "usage": "/connect", "desc": "Server manager", "admin": false}, {"name": "/info", "usage": "/info", "desc": "Client logo, version and the loaded settings", "admin": false}, {"name": "/update", "usage": "/update", "desc": "Client version, server update hint, install / roll back", "admin": false}, {"name": "/quit", "usage": "/quit", "desc": "Close the game, like Alt+F4", "admin": false}], "info_catalog": [{"name": "/wp", "usage": "/wp", "desc": "Back to the Windrose+ console", "admin": false}, {"name": "/connect", "usage": "/connect", "desc": "Server manager", "admin": false}, {"name": "/ui", "usage": "/ui", "desc": "Console zoom and height", "admin": false}, {"name": "/update", "usage": "/update", "desc": "Client version, server update hint, install / roll back", "admin": false}, {"name": "/quit", "usage": "/quit", "desc": "Close the game, like Alt+F4", "admin": false}], "update_catalog": [{"name": "install", "usage": "install", "desc": "Download the server's client version, check its signature, start it at the next game start", "admin": false}, {"name": "refresh", "usage": "refresh", "desc": "Ask the server again which client version it wants (after a change on the server)", "admin": false}, {"name": "rollback", "usage": "rollback", "desc": "Start the previous client version at the next game start", "admin": false}, {"name": "/wp", "usage": "/wp", "desc": "Back to the Windrose+ console", "admin": false}, {"name": "/connect", "usage": "/connect", "desc": "Server manager", "admin": false}, {"name": "/ui", "usage": "/ui", "desc": "Console zoom and height", "admin": false}, {"name": "/info", "usage": "/info", "desc": "Client logo, version and the loaded settings", "admin": false}, {"name": "/quit", "usage": "/quit", "desc": "Close the game, like Alt+F4", "admin": false}], "height_fraction": 0.65, "font_size": 20.0, "executing_timeout_s": 25, "palette": [{"role": "Main Text / Log", "hex": "#9DA0A8", "in_code": true}, {"role": "Server Echo", "hex": "#BAA57A", "in_code": true}, {"role": "Input Text", "hex": "#A5A9B2", "in_code": true}, {"role": "Subtitle / Muted", "hex": "#5F636E", "in_code": true}, {"role": "Command / Prompt", "hex": "#58C2A2", "in_code": true}, {"role": "Notice / Warning", "hex": "#D8A053", "in_code": true}, {"role": "Info", "hex": "#9DA0A8", "in_code": true}, {"role": "Error / Denied", "hex": "#CE4D4F", "in_code": true}, {"role": "Separator / Border", "hex": "#464851", "in_code": true}, {"role": "Selection Highlight", "hex": "#58C2A2", "in_code": true}, {"role": "Console Window", "hex": "#1C1D21", "in_code": true}, {"role": "Frame / Input Field", "hex": "#18191D", "in_code": true}, {"role": "Sunken Log Area", "hex": "#131417", "in_code": true}, {"role": "Activity Scanner", "hex": "#AB2A28", "in_code": true}, {"role": "Ready Status Dot", "hex": "#58C2A2", "in_code": true}]}, "addon": {"version": "3.0.0", "commit": null, "dirty": [], "enabled_on": {}}, "workplan": [], "schema": {"node": "demo server", "commands": [{"name": "wp.ban", "usage": "wp.ban <player> [reason]", "desc": "Ban a player by name (adds to ban list and kicks if present)"}, {"name": "wp.bb", "usage": "wp.bb <get|set|galen>", "desc": "Read / write scenario blackboard values; wp.bb galen = Galen's potion again (WindrosePlusBridge 0.29)"}, {"name": "wp.bb get", "usage": "<player> <tag> <int|bool|float|time>", "desc": "Read a scenario blackboard value"}, {"name": "wp.bb set", "usage": "<player> <tag> <type> <value>", "desc": "Write a scenario blackboard value"}, {"name": "wp.bb galen", "usage": "[player]", "desc": "Galen's potion again (resets his cooldown)"}, {"name": "wp.client", "usage": "wp.client <schema|ping|hello|release|update|test>", "desc": "In-game console (client): command list, ping, version handshake, update hint"}, {"name": "wp.client schema", "usage": "[protocol]", "desc": "Command list for the console (protocol 2: with subcommands, in parts)"}, {"name": "wp.client ping", "usage": "", "desc": "Reachability check"}, {"name": "wp.client hello", "usage": "<version> <protocol> <loader abi>", "desc": "Client version handshake; answers the update hint"}, {"name": "wp.client release", "usage": "[set <latest> <min|-> <manifest url> | clear]", "desc": "Which client version this server wants"}, {"name": "wp.client update", "usage": "get <file> | ack <id> <seq>", "desc": "Client update over the game connection"}, {"name": "wp.client test", "usage": "<silent|deferred> [s]", "desc": "Timeout tests (in-game console only)"}, {"name": "wp.config", "usage": "wp.config", "desc": "Show current config values"}, {"name": "wp.connections", "usage": "wp.connections", "desc": "Show network connection info"}, {"name": "wp.creatures", "usage": "wp.creatures", "desc": "Count spawned creatures by type"}, {"name": "wp.daysync", "usage": "wp.daysync <status|off|clock|light|apply|zone|offset>", "desc": "Set the game time from the real time on the first join (needs WindrosePlusBridge)"}, {"name": "wp.daysync status", "usage": "", "desc": "Mode, zone, offset and the last sync"}, {"name": "wp.daysync off", "usage": "", "desc": "No sync on join"}, {"name": "wp.daysync clock", "usage": "", "desc": "Game time = real clock time"}, {"name": "wp.daysync light", "usage": "", "desc": "Game time follows real daylight (sunrise/sunset of the zone)"}, {"name": "wp.daysync apply", "usage": "", "desc": "Sync now (first player online)"}, {"name": "wp.daysync zone", "usage": "<name>", "desc": "Time zone, e.g. Europe/Berlin"}, {"name": "wp.daysync offset", "usage": "<hours|none>", "desc": "Shift the synced time"}, {"name": "wp.daytime", "usage": "wp.daytime <get|set|goto|lapse|base|probe>", "desc": "Read or set the time of day (test nodes, needs WindrosePlusBridge 0.15)"}, {"name": "wp.daytime get", "usage": "", "desc": "Current time of day"}, {"name": "wp.daytime set", "usage": "<hours|HH:MM|morning|noon|afternoon|evening|night|midnight>", "desc": "Jump to a time"}, {"name": "wp.daytime goto", "usage": "<time> [seconds] [wind[:speed]]", "desc": "Run the clock forward to a time"}, {"name": "wp.daytime lapse start", "usage": "<factor> [seconds] [wind[:speed]]", "desc": "Time lapse (day cycle runs <factor> x faster)"}, {"name": "wp.daytime lapse stop", "usage": "", "desc": "End a running time lapse"}, {"name": "wp.daytime lapse debug", "usage": "[on|off]", "desc": "Log the lapse ticks"}, {"name": "wp.daytime base get", "usage": "", "desc": "Island time base (research)"}, {"name": "wp.daytime base set", "usage": "<value>", "desc": "Set the island time base (research; can break buildings)"}, {"name": "wp.daytime base ramp", "usage": "<value> [seconds]", "desc": "Move the island time base slowly (research)"}, {"name": "wp.daytime base reset", "usage": "", "desc": "Island time base back to the saved value"}, {"name": "wp.daytime probe", "usage": "<time>", "desc": "What a time would set (no change)"}, {"name": "wp.dialog", "usage": "wp.dialog <list|log>", "desc": "NPC dialog research: list dialog nodes and log choices (WindrosePlusBridge 0.28)"}, {"name": "wp.dialog list", "usage": "", "desc": "Dialog nodes seen so far"}, {"name": "wp.dialog log", "usage": "<on|off>", "desc": "Log every dialog node and choice"}, {"name": "wp.discover", "usage": "wp.discover <TypeName>", "desc": "Discover all properties on a UE4 type by brute-force probing"}, {"name": "wp.doctor", "usage": "wp.doctor", "desc": "Show a support snapshot with runtime, module, and config warnings"}, {"name": "wp.entities", "usage": "wp.entities", "desc": "Count total entities by type (lag diagnosis)"}, {"name": "wp.events", "usage": "wp.events", "desc": "Show event bus subscriptions and ping the native bridge (test nodes)"}, {"name": "wp.fields", "usage": "wp.fields <TypeName> [filter]", "desc": "List real FProperty fields on a UE4 type via class reflection (walks superclass chain)"}, {"name": "wp.freebuild", "usage": "wp.freebuild <status|on|off>", "desc": "Build without resources (test nodes)"}, {"name": "wp.freebuild status", "usage": "", "desc": "Free build on or off, building recipes"}, {"name": "wp.freebuild on", "usage": "", "desc": "Build without resources (survives restarts: flag file)"}, {"name": "wp.freebuild off", "usage": "", "desc": "Normal building again"}, {"name": "wp.give", "usage": "wp.give <item|galen|bushes|refill|status|disarm|list|show>", "desc": "Spawn items through palms or bushes (test nodes, needs WindrosePlusBridge)"}, {"name": "wp.give item", "usage": "<player> <item> [count]", "desc": "The player's next palm shake drops <count> x <item>"}, {"name": "wp.give galen", "usage": "<item> [count] [player] | off", "desc": "Galen gives the item instead of his potion"}, {"name": "wp.give bushes", "usage": "<lootTable> [seconds]", "desc": "Bushes and debris drop from a loot table for a while"}, {"name": "wp.give refill", "usage": "[player]", "desc": "Refill the palm the player looks at"}, {"name": "wp.give status", "usage": "", "desc": "Armed palms, bushes and rewards"}, {"name": "wp.give disarm", "usage": "<player|all>", "desc": "Remove arms"}, {"name": "wp.give list items", "usage": "<filter>", "desc": "Find item names"}, {"name": "wp.give list tables", "usage": "<filter>", "desc": "Find loot table names"}, {"name": "wp.give show table", "usage": "<lootTable>", "desc": "Contents of a loot table (items, min/max, weight)"}, {"name": "wp.givestats", "usage": "wp.givestats <player> <stat_count> [talent_count]", "desc": "Record stat/talent point compensation note (audit only)"}, {"name": "wp.gm", "usage": "wp.gm <property>", "desc": "Read any R5GameMode property"}, {"name": "wp.gravity", "usage": "wp.gravity [player] <multiplier>", "desc": "Set player gravity multiplier (CharacterMovement.GravityScale; 1.0=normal, 0.3=moon)"}, {"name": "wp.health", "usage": "wp.health [player]", "desc": "Read player health"}, {"name": "wp.help", "usage": "wp.help [command|all]", "desc": "List all commands or get help for a specific command"}, {"name": "wp.inspect", "usage": "wp.inspect <TypeName>", "desc": "Inspect a UObject type (count + first instance details)"}, {"name": "wp.jump", "usage": "wp.jump [player] <multiplier>", "desc": "Set player jump height multiplier (JumpZVelocity; 1.0=normal, 2.0=double)"}, {"name": "wp.kick", "usage": "wp.kick <player> [reason]", "desc": "Kick a connected player by name"}, {"name": "wp.kill", "usage": "wp.kill <player|entity>", "desc": "Kill a player or a creature via GE_SetZeroHealth (the game's death pipeline)"}, {"name": "wp.kill player", "usage": "<name|#id>", "desc": "Kill an online player"}, {"name": "wp.kill entity", "usage": "<id>", "desc": "Kill a creature by instance id (ids from wp.nearby list creature)"}, {"name": "wp.listbans", "usage": "wp.listbans", "desc": "List banned players"}, {"name": "wp.mapexport", "usage": "wp.mapexport", "desc": "Export the live world's terrain and rebuild the Sea Chart"}, {"name": "wp.mapgen", "usage": "wp.mapgen", "desc": "Rebuild the Sea Chart tiles from the exported terrain"}, {"name": "wp.mapprobe", "usage": "wp.mapprobe", "desc": "Write a landscape diagnostic to terrain_probe.json"}, {"name": "wp.memory", "usage": "wp.memory", "desc": "Show detailed memory usage"}, {"name": "wp.methods", "usage": "wp.methods <TypeName> [filter]", "desc": "List UFunctions on a UE4 type via class reflection (walks superclass chain)"}, {"name": "wp.modreload", "usage": "wp.modreload", "desc": "Force WP+ Lua state restart (UE4SS RestartMod). Use to pick up Scripts/ changes without bouncing the server."}, {"name": "wp.msgtest", "usage": "wp.msgtest <player> <bytes|Nk>", "desc": "Send a ClientMessage of the given size to a player (client proxy size test, test nodes)"}, {"name": "wp.multipliers", "usage": "wp.multipliers", "desc": "Show all gameplay multipliers"}, {"name": "wp.nativeprobe", "usage": "wp.nativeprobe", "desc": "Trigger read-only native UObject reflection dump"}, {"name": "wp.nearby", "usage": "wp.nearby <list>", "desc": "What is near a player"}, {"name": "wp.nearby list creature", "usage": "[player] [radius_m]", "desc": "Creatures with their ids (default 100 m)"}, {"name": "wp.nearby list player", "usage": "[player] [radius_m]", "desc": "Other players and their distance"}, {"name": "wp.notify", "usage": "wp.notify <message|revive|items>", "desc": "Trigger client messages for a player (test nodes, WindrosePlusBridge 0.30)"}, {"name": "wp.notify message", "usage": "<player> <message|team|debug> <text ...>", "desc": "A chat-style message"}, {"name": "wp.notify revive", "usage": "<player> <set|already|cant>", "desc": "The tent / revive messages"}, {"name": "wp.notify items", "usage": "<player> <item> [delta] [amount]", "desc": "The \"+N item\" pop-up"}, {"name": "wp.peek", "usage": "wp.peek <TypeName> <PropertyName>", "desc": "Read a property on the first valid instance of a type, with multi-way deref"}, {"name": "wp.perf", "usage": "wp.perf", "desc": "Show server performance metrics"}, {"name": "wp.perms", "usage": "wp.perms <list|role|set|unset|check|prune|reload>", "desc": "Roles per account and per command (public < member < admin < dev) for in-game channels"}, {"name": "wp.perms list", "usage": "[accounts|commands|unassigned|stale] [--json]", "desc": "Roles and rules (members: only their own)"}, {"name": "wp.perms role", "usage": "<player|accountId> <public|member|admin|dev> [note]", "desc": "Give an account a role"}, {"name": "wp.perms set", "usage": "<command [sub]> <role>", "desc": "Set the role a command or subcommand needs"}, {"name": "wp.perms unset", "usage": "<command [sub]>", "desc": "Remove a rule (the command falls back to the next rule / dev)"}, {"name": "wp.perms check", "usage": "<player|accountId> <command ...>", "desc": "May this account run this? (members: only themselves)"}, {"name": "wp.perms prune", "usage": "", "desc": "Remove rules for commands that no longer exist"}, {"name": "wp.perms reload", "usage": "", "desc": "Re-read permissions.json after a hand edit"}, {"name": "wp.playerinfo", "usage": "wp.playerinfo [player]", "desc": "Show consolidated player info (identity, vitals, stats, combat, progression)"}, {"name": "wp.players", "usage": "wp.players", "desc": "List online players with positions"}, {"name": "wp.playtime", "usage": "wp.playtime [player]", "desc": "Show how long a player has been online this session"}, {"name": "wp.pos", "usage": "wp.pos [player]", "desc": "Get player positions"}, {"name": "wp.probe_player", "usage": "wp.probe_player", "desc": "Probe all name-related properties on connected players"}, {"name": "wp.props", "usage": "wp.props <TypeName> [filter]", "desc": "List all properties on first instance of a UObject type"}, {"name": "wp.quest", "usage": "wp.quest <list|get|set>", "desc": "Inspect or set quest state (test nodes)"}, {"name": "wp.quest list", "usage": "[filter]", "desc": "Quest names"}, {"name": "wp.quest get", "usage": "<player> <quest>", "desc": "A player's quest state"}, {"name": "wp.quest set", "usage": "<player> <quest> <state> [scope]", "desc": "Set a player's quest state"}, {"name": "wp.recipes", "usage": "wp.recipes <find>", "desc": "Find recipes (test nodes)"}, {"name": "wp.recipes find", "usage": "<filter>", "desc": "Recipe names containing the filter"}, {"name": "wp.reload", "usage": "wp.reload", "desc": "Reload config from disk"}, {"name": "wp.settings", "usage": "wp.settings [filter]", "desc": "List all R5GameMode settings with current values"}, {"name": "wp.shiprespawn", "usage": "wp.shiprespawn", "desc": "Show Ship Respawn state per player"}, {"name": "wp.speed", "usage": "wp.speed [player] <multiplier>", "desc": "Set player movement speed multiplier"}, {"name": "wp.stamina", "usage": "wp.stamina [player]", "desc": "Read stamina/hunger/thirst for players"}, {"name": "wp.status", "usage": "wp.status", "desc": "Show server status and multipliers"}, {"name": "wp.terrain", "usage": "wp.terrain <status|restart|probe>", "desc": "Terrain heights for the Sea Chart: fill job and line traces"}, {"name": "wp.terrain status", "usage": "", "desc": "Fill progress (components filled, ocean, pending, traces)"}, {"name": "wp.terrain restart", "usage": "", "desc": "Restart the fill job from scratch"}, {"name": "wp.terrain probe", "usage": "<x> <y> [debug]", "desc": "Line-trace the terrain height at a world position"}, {"name": "wp.time", "usage": "wp.time", "desc": "Read current time of day values"}, {"name": "wp.tp", "usage": "wp.tp [player] <x> <y> [z]", "desc": "Teleport player to absolute world coordinates (X, Y, optional Z)"}, {"name": "wp.unban", "usage": "wp.unban <player>", "desc": "Remove a player from the ban list"}, {"name": "wp.uptime", "usage": "wp.uptime", "desc": "Show server uptime"}, {"name": "wp.version", "usage": "wp.version", "desc": "Show version"}, {"name": "wp.weather", "usage": "wp.weather <status|wind|get|set>", "desc": "Wind and weather through WindrosePlusBridge 0.20 (test nodes)"}, {"name": "wp.weather status", "usage": "", "desc": "Current wind and weather values"}, {"name": "wp.weather wind", "usage": "<speed|normal>", "desc": "Set the wind speed (normal = the game rolls again)"}, {"name": "wp.weather get", "usage": "<selector> <path>", "desc": "Read a weather value"}, {"name": "wp.weather set", "usage": "<selector> <path> <value>", "desc": "Write a weather value (replicated)"}, {"name": "wp.x", "usage": "wp.x <get|find|class|trace|call|tasks|stats|snap|diff>", "desc": "Inspect live game objects on the game thread (needs WindrosePlusBridge)"}, {"name": "wp.x get", "usage": "<selector> [path] [--depth N] [--filter text] [--elements N] [--limit N] [--file]", "desc": "Show an object (or a member path) and its values"}, {"name": "wp.x find", "usage": "<Type>[~name] [--near <selector>] [--radius m]", "desc": "Instances of a type, nearest first"}, {"name": "wp.x class", "usage": "<Type> [--filter text]", "desc": "Properties (offsets, replicated) and functions (RPCs)"}, {"name": "wp.x trace", "usage": "<Class:Function|Class:*> [--count N] [--seconds S] | list | show <id> | stop <id|all>", "desc": "Record calls of a function while you act in game"}, {"name": "wp.x call", "usage": "<selector> <FunctionName> [StringArg...]", "desc": "Run a 0-arg or 1-string-arg function (not read-only)"}, {"name": "wp.x tasks", "usage": "[clear]", "desc": "Waiting game-thread tasks and scheduled jobs"}, {"name": "wp.x stats", "usage": "", "desc": "Bridge queues, UObject count, Lua memory, profile switches"}, {"name": "wp.x snap", "usage": "<name> <selector> [path] [options] | list | drop <name>", "desc": "Remember values for a later diff"}, {"name": "wp.x diff", "usage": "<name>", "desc": "Read again and show what changed since the snapshot"}, {"name": "wp.yield", "usage": "wp.yield <status|set|off|list>", "desc": "Multiply gathering yield: trees, mining, plants (test nodes)"}, {"name": "wp.yield status", "usage": "", "desc": "Current factors per category"}, {"name": "wp.yield set", "usage": "<factor> [category ...]", "desc": "Multiply yield (1..1000; all categories when none given)"}, {"name": "wp.yield off", "usage": "[category ...]", "desc": "Back to normal yield"}, {"name": "wp.yield list categories", "usage": "", "desc": "The categories and what they cover"}]}, "proposal": null, "public": true};
+// Fallback sample so the template renders on its own (marked as sample in the stamp)
+const S = STATE || {
+  generated: null,
+  client: { version: "?", commit: null, branch: "?", dirty: [], build: null, local_install: null },
+  ui: { title: "WINDROSE+ IN-GAME ADMIN CONSOLE", hint: "| Toggle: F10 | Close: ESC", height_fraction: .45, executing_timeout_s: 25,
+        banner: ["=".repeat(79), " Windrose+ In-Game Admin Console", " Type 'wp.help' for command directory, 'wp.client ping' to check the server.", "=".repeat(79)],
+        default_catalog: [{name:"wp.version",usage:"wp.version",desc:"Show client/server version and build"},{name:"wp.client",usage:"wp.client schema | wp.client ping",desc:"In-game console: command list, reachability check"},{name:"wp.help",usage:"wp.help [command]",desc:"Directory of available commands"}],
+        palette: [] },
+  addon: { version: "?", commit: null, dirty: [], enabled_on: {} }, workplan: [], schema: null,
+};
+// public by the permission defaults (core + client-console) + local commands; subcommand entries count by their full name
+const PUBLIC = new Set(["wp.version", "wp.help", "wp.client", "wp.client schema", "wp.client ping", "wp.client hello", "wp.client update",
+                        "/connect", "/quit", "/ui"]);
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+// ---------- console model (mirrors console_ui.cpp) ----------
+// cat = the active catalog: the server's in the Windrose+ context, the /connect sub-commands in the connect context
+const st = { open: true, exec: false, logs: [], hist: [], hpos: -1, cat: [], serverCat: [], context: "", pal: false, matches: [], pidx: 0,
+             syn: -1, synDismissed: false, execTimer: null };
+function switchContext(ctx) {
+  st.context = ctx; st.cat = ctx === "/connect" ? (S.ui.connect_catalog || []) : ctx === "/ui" ? (S.ui.ui_catalog || []) : ctx === "/info" ? (S.ui.info_catalog || []) : ctx === "/update" ? (S.ui.update_catalog || []) : st.serverCat;
+  st.pal = false; st.matches = []; st.pidx = 0; st.syn = -1; st.synDismissed = false;
+}
+const lower = s => s.toLowerCase().replace(/^[ \t]+/, "");
+const token = s => { const l = lower(s); const i = l.search(/[ \t]/); return { tok: i < 0 ? l : l.slice(0, i), space: i >= 0 }; };
+
+function logClass(l) {
+  if (l.startsWith("> ") || l.startsWith("$ ")) return "l-cmd";
+  if (l.startsWith("[Server]")) return "l-server";
+  if (l.startsWith("[Notice]")) return "l-notice";
+  if (l.startsWith("[Info]")) return "l-info";
+  if (l.startsWith("[Error]") || l.includes("Access denied")) return "l-error";
+  if (l.startsWith("=")) return "l-banner";
+  return "l-text";
+}
+function addLog(text) { for (const l of String(text).split("\n")) st.logs.push(l); if (st.logs.length > 2000) st.logs.splice(0, st.logs.length - 1000); renderLog(true); }
+// Subcommands (protocol 2) are entries named "<command> <subcommand>" (console_ui.cpp IsSubEntry / FilterPalette)
+const isSub = c => c.name.includes(" ");
+const fullUsage = c => isSub(c) ? (c.usage ? c.name + " " + c.usage : c.name) : c.usage;
+function filter(prefix) {
+  const p = lower(prefix), subQ = p.includes(" ");
+  st.matches = st.cat.map((c, i) => i).filter(i => isSub(st.cat[i]) === subQ && (!p || st.cat[i].name.toLowerCase().startsWith(p)));
+  if (st.pidx >= st.matches.length) st.pidx = 0;
+}
+// LongestCommandMatch: the entry the line starts with at a word boundary, longest first
+function longestMatch(input) {
+  const l = lower(input); let best = -1, len = 0;
+  st.cat.forEach((c, i) => { const n = c.name.toLowerCase();
+    if (n && n.length > len && l.startsWith(n) && (l.length === n.length || /[ \t]/.test(l[n.length]))) { best = i; len = n.length; } });
+  return best;
+}
+function setInput(v) { const el = $("cin"); el.value = v; el.setSelectionRange(v.length, v.length); }
+function cycle(dir) {
+  if (!st.pal || !st.matches.length) return;
+  const n = st.matches.length; st.pidx = ((st.pidx + dir) % n + n) % n;
+  setInput(st.cat[st.matches[st.pidx]].name); st.syn = st.matches[st.pidx]; st.synDismissed = false;
+}
+function selectCmd(i) { // a command with subcommands: the palette goes on with them
+  setInput(st.cat[i].name + " "); filter(st.cat[i].name + " "); st.pal = st.matches.length > 0; st.pidx = 0;
+  st.syn = i; st.synDismissed = false; $("cin").focus(); render();
+}
+function matchSyntax() {
+  const { tok } = token($("cin").value); const prev = st.syn;
+  st.syn = tok ? longestMatch($("cin").value) : -1;
+  if (st.syn !== prev && st.syn >= 0) st.synDismissed = false;
+}
+function setExec(on) {
+  st.exec = on; clearTimeout(st.execTimer);
+  if (on) st.execTimer = setTimeout(() => { st.exec = false; addLog(`[Error] No answer from the server within ${S.ui.executing_timeout_s || 25} s.`); render(); }, (S.ui.executing_timeout_s || 25) * 1000);
+  render();
+}
+// ---------- server manager mock (server_manager.cpp; the real list is WindroseClient_servers.tsv on the player's PC) ----------
+const NOW_S = Math.floor(Date.now() / 1000);
+const SERVERS = [ // example rows, documentation address ranges
+  { name: "Example Harbor", address: "192.0.2.10", port: 7777, fav: true, pw: false, last: NOW_S - 2 * 3600 },
+  { name: "Saltwind Coop", address: "198.51.100.7", port: 7778, fav: true, pw: true, secret: "tide-42", last: NOW_S - 5 * 86400 },
+  { name: "203.0.113.88:7777", address: "203.0.113.88", port: 7777, fav: false, pw: false, last: NOW_S - 3 * 3600 },
+  { name: "Driftwood Isles", address: "198.51.100.42", port: 7777, fav: false, pw: false, last: NOW_S - 9 * 86400 },
+];
+// ServerManager::Snapshot: list order = favorites first, then most recently played; n = #n
+function snapshot() {
+  return [...SERVERS].sort((a, b) => a.fav !== b.fav ? (a.fav ? -1 : 1) : b.last - a.last)
+    .map((e, i) => ({ ...e, n: i + 1, endpoint: `${e.address}:${e.port}`, named: e.name !== `${e.address}:${e.port}`, ref: e }));
+}
+// MatchRow: "#n", "ip[:port]", or a name (exact, prefix, part)
+function matchRow(rows, arg) {
+  if (!arg) return -1;
+  if (arg[0] === "#") { if (!/^#\d+$/.test(arg)) return -1; const n = +arg.slice(1); return n >= 1 && n <= rows.length ? n - 1 : -1; }
+  const m = /^([A-Za-z0-9.-]+)(?::(\d+))?$/.exec(arg);
+  if (m) { const i = rows.findIndex(r => r.address.toLowerCase() === m[1].toLowerCase() && (!m[2] || r.port === +m[2])); if (i >= 0) return i; }
+  const a = arg.toLowerCase();
+  for (const f of [n => n === a, n => n.startsWith(a), n => n.includes(a)]) { const i = rows.findIndex(r => f(r.name.toLowerCase())); if (i >= 0) return i; }
+  return -1;
+}
+// SplitOpen: the whole rest as the target first; if that is no server, the last word is the password
+function splitOpen(args, rows) {
+  if (!args.length) return { target: "", password: "" };
+  let target = args.join(" "), password = "";
+  if (args.length >= 2 && matchRow(rows, target) < 0) { target = args.slice(0, -1).join(" "); password = args[args.length - 1]; }
+  return { target, password };
+}
+// TargetRow: the row a sub-command line points at
+function targetRow(rows, line) {
+  const w = line.trim().split(/\s+/); if (w.length < 2) return -1;
+  const sub = w[0].toLowerCase();
+  if (sub === "open") return matchRow(rows, splitOpen(w.slice(1), rows).target);
+  if (sub === "name" || sub === "pass") return matchRow(rows, w[1]);
+  if (sub === "fav" || sub === "remove") return matchRow(rows, w.slice(1).join(" "));
+  return -1;
+}
+// Redact: passwords never reach the echo / history
+function redact(full) {
+  const w = full.trim().split(/\s+/);
+  if (w.length < 4 || w[0].toLowerCase() !== "/connect") return full;
+  const sub = w[1].toLowerCase();
+  if (sub === "pass") return w[3] === "-" || (w.length === 4 && w[3].toLowerCase() === "show") ? full : `${w[0]} ${w[1]} ${w[2]} ****`;
+  if (sub !== "open") return full;
+  const o = splitOpen(w.slice(2), snapshot());
+  return o.password ? `${w[0]} ${w[1]} ${o.target} ****` : full;
+}
+// HandleLocal (mock): the commands change SERVERS like the real ones change the list
+function mockLocal(full) {
+  const w = full.trim().split(/\s+/), sub = (w[1] || "list").toLowerCase(), rows = snapshot();
+  if (sub === "list") return [...rows.map(r => `  #${r.n}${r.fav ? " * " : "   "}${r.name}   ${r.endpoint}${r.pw ? "   [pw]" : ""}   ${agoS(r.last)}`), "[Info] /connect open <#n|name> joins. * = favorite."];
+  if (sub === "close") return ["[Notice] You are in the main menu already. (mock)"];
+  if (sub === "add") {
+    const m = /^([A-Za-z0-9.-]+)(?::(\d+))?$/.exec(w[2] || "");
+    if (!m) return ["[Error] Usage: /connect add <ip[:port]> [name]   (port defaults to 7777)"];
+    const e = { address: m[1], port: +(m[2] || 7777), fav: false, pw: false, last: 0 }; e.name = w.slice(3).join(" ") || `${e.address}:${e.port}`;
+    SERVERS.push(e); return [`[Info] Added ${e.name} (${e.address}:${e.port}). Password: /connect pass <#n> <password>.`];
+  }
+  if (w.length < 3) return ["[Error] Usage: /connect [list] | open <#n|name|ip[:port]> [password] | close | add <ip[:port]> [name] | ..."];
+  if (sub === "open") {
+    const o = splitOpen(w.slice(2), rows), i = matchRow(rows, o.target);
+    if (i < 0) return [`[Error] No server matches "${o.target}". /connect list shows the known ones.`];
+    rows[i].ref.last = Math.floor(Date.now() / 1000);
+    return [`[Info] Connecting to ${rows[i].name} (${rows[i].endpoint}${o.password || rows[i].pw ? ", with password" : ""}) ... (mock: the console closes and stays locked until the loading screen is gone)`];
+  }
+  const target = (sub === "name" || sub === "pass") ? w[2] : w.slice(2).join(" "), i = matchRow(rows, target);
+  if (i < 0) return [`[Error] No server matches "${target}". /connect list shows the known ones.`];
+  const e = rows[i].ref;
+  if (sub === "name" && w.length > 3) { e.name = w.slice(3).join(" "); return [`[Info] Renamed to ${e.name}.`]; }
+  if (sub === "pass" && w.length > 3) { e.pw = w[3] !== "-"; e.secret = e.pw ? w.slice(3).join(" ") : ""; return [e.pw ? "[Info] Password stored (encrypted for your Windows user)." : "[Info] Password removed."]; }
+  if (sub === "fav") { e.fav = !e.fav; return [`[Info] ${e.name}${e.fav ? " is a favorite now." : " is no longer a favorite."}`]; }
+  if (sub === "remove") { SERVERS.splice(SERVERS.indexOf(e), 1); return [`[Info] Removed ${e.name} (${e.address}:${e.port}).`]; }
+  return ["[Error] Usage: /connect [list] | open <#n|name|ip[:port]> [password] | close | add <ip[:port]> [name] | ..."];
+}
+function agoS(t) { if (!t) return "never"; const d = Math.floor(Date.now() / 1000) - t; return d < 3600 ? `${Math.max(1, Math.floor(d / 60))} min ago` : d < 48 * 3600 ? `${Math.floor(d / 3600)} h ago` : `${Math.floor(d / 86400)} d ago`; }
+
+// Servers view state (console_ui.cpp s_srv_*): selection kept by endpoint
+const sv = { filter: 0, sel: "", sortCol: 0, asc: true, pw: false, pwShow: false, pwFor: "", rows: [], view: [] };
+// OpenPasswordField: filled with the stored password, masked unless show; plain text only in the field
+function openPw(r, show) { sv.sel = r.endpoint; sv.pw = true; sv.pwShow = show; sv.pwFor = r.endpoint; $("svpwin").value = r.ref.secret || ""; render(); $("svpwin").focus(); }
+function closePw() { $("svpwin").value = ""; sv.pw = false; sv.pwShow = false; sv.pwFor = ""; render(); cin.focus(); }
+function selectRow(r) { sv.sel = r.endpoint; setInput("open " + (r.named ? r.name : "#" + r.n)); matchSyntax(); }
+function moveSel(dir) {
+  if (!sv.view.length) return;
+  let pos = sv.view.findIndex(i => sv.rows[i].endpoint === sv.sel);
+  pos = pos < 0 ? (dir > 0 ? 0 : sv.view.length - 1) : Math.min(Math.max(pos + dir, 0), sv.view.length - 1);
+  selectRow(sv.rows[sv.view[pos]]);
+}
+function mockAnswer(cmd) {
+  const { tok } = token(cmd); const rest = lower(cmd).slice(tok.length).trim();
+  const known = st.cat.find(c => c.name.toLowerCase() === tok);
+  if (tok === "wp.client" && rest.startsWith("ping")) return `[Server] pong (${new Date().toTimeString().slice(0, 8)})`;
+  if (tok === "wp.version") return `[Server] Windrose+ Client Proxy v${S.client.version} (mock answer)`;
+  if (tok === "wp.help") return "[Server] " + st.cat.map(c => c.name).join(", ");
+  if (!known) return `[Error] Unknown command: ${tok}`;
+  return `[Server] (mock) ${known.name} ran — the real answer comes from the server`;
+}
+// RunLine: echo, history, context switches, else the command (typed lines, tabs, buttons, menu items)
+function runLine(full) {
+  const lowerFull = full.toLowerCase(), shown = redact(full);
+  addLog("> " + shown); st.hist.push(shown); st.hpos = -1;
+  if (lowerFull === "/connect") { if (st.context !== "/connect") addLog("[Info] Servers: Up/Down or the wheel select, Enter runs the line, double-click connects, right-click for more. /wp goes back."); switchContext("/connect"); }
+  else if (lowerFull === "/wp") { if (st.context) addLog("[Info] Windrose+ console."); switchContext(""); }
+  else if (/^\/connect pass \S+( show)?$/.test(lowerFull)) { // "pass #n" opens the password field, "pass #n show" unmasked
+    const rows = snapshot(), i = targetRow(rows, full.slice(9).replace(/ show$/i, ""));
+    if (i < 0) addLog("[Error] No server matches that. /connect list shows the known ones.");
+    else { if (st.context !== "/connect") switchContext("/connect"); openPw(rows[i], / show$/.test(lowerFull)); return; }
+  }
+  else if (lowerFull === "/quit") addLog("[Info] (mock) the game would close now, like Alt+F4.");
+  else if (lowerFull === "/info" || lowerFull.startsWith("/info ")) { if (lowerFull !== "/info") addLog("[Error] /info has no sub-commands. /wp goes back."); else switchContext("/info"); }
+  else if (lowerFull === "/update") { if (st.context !== "/update") addLog("[Info] Client update: install / rollback (type or click). /wp goes back."); switchContext("/update"); }
+  else if (lowerFull === "/update install" || lowerFull === "/update rollback" || lowerFull === "/update refresh") {
+    upd.last = lowerFull.endsWith("install") ? "[Info] Update: checking the server's version... (mock: nothing is downloaded on this page)"
+             : lowerFull.endsWith("refresh") ? "[Error] Update: not on a server that sends update information (join one with client-console 1.5.0+)."
+             : "[Error] Update: no previous version to go back to."; }
+  else if (lowerFull === "/ui" || lowerFull.startsWith("/ui ")) { // WindroseClient.ini (mock: size and height act on this page)
+    const w = lowerFull.split(/\s+/), v = parseFloat(w[2]);
+    if (!w[1] && st.context !== "/ui") { addLog("[Info] Console look: Up/Down or the wheel select a setting, edit the number, Enter applies; the buttons do the same. /wp goes back."); switchContext("/ui"); render(); return; }
+    if (w[1] === "zoom" && (v === 1 || v === 1.5 || v === 2)) st.fontSize = v === 1.5 ? 20 : 13 * v;
+    else if (w[1] === "height" && v >= 0.25 && v <= 0.9) S.ui.height_fraction = v;
+    else if (w[1] && w[1] !== "reload") { addLog("[Error] Usage: /ui [zoom 1|1.5|2 | height <0.25-0.9> | reload]  (pixel fonts are only sharp at 13, 20 or 26 px)"); render(); return; }
+    addLog(`[Info] Console: zoom ${zoomOf()} (${fsz()} px text, spacing x${zoomOf()}), height ${S.ui.height_fraction} (WindroseClient.ini)`);
+  }
+  else if (lowerFull.startsWith("/connect")) mockLocal(full).forEach(addLog);
+  else if (full[0] === "/") addLog(`[Error] Unknown local command ${full.split(" ")[0]}. Local commands: /connect, /wp, /quit`);
+  else { setExec(true); setTimeout(() => { if (!st.exec) return; addLog(mockAnswer(full)); setExec(false); }, 700 + Math.random() * 600); }
+  render();
+}
+function execute() {
+  const cmd = $("cin").value.replace(/[ \r\n]+$/, "").replace(/^[ \t]+/, "");
+  // In a context the line is a sub-command; "/..." lines are absolute everywhere (console_ui.cpp ExecuteCurrentInput)
+  if (cmd) runLine(st.context && cmd[0] !== "/" ? st.context + " " + cmd : cmd);
+  setInput(""); st.pal = false; st.matches = []; st.pidx = 0; st.synDismissed = false; st.syn = -1; render();
+}
+
+// ---------- /ui view (RenderUiView) ----------
+const uv = { sel: 0 };
+// zoom 1 | 2: ImGui's embedded ProggyClean is pixel-perfect only at 13 and 26 px (imgui docs/FONTS.md)
+const fsz = () => st.fontSize || S.ui.font_size || 26;
+const zoomOf = () => fsz() === 20 ? 1.5 : fsz() / 13; // 13 px ProggyClean | 20 px ProggyTiny x2 | 26 px ProggyClean x2
+const uiLine = i => i === 0 ? `zoom ${zoomOf()}` : `height ${S.ui.height_fraction}`;
+function moveUi(dir) { uv.sel = Math.min(1, Math.max(0, uv.sel + dir)); setInput(uiLine(uv.sel)); matchSyntax(); }
+function renderUi() {
+  const r2 = x => Math.round(x * 100) / 100, h = S.ui.height_fraction, z = zoomOf();
+  const btn = (l, line, cls = "") => `<button class="btn ${cls}" data-l="${esc(line)}">${esc(l)}</button>`;
+  const rows = [
+    ["Zoom", `${z} (${fsz()} px)`, btn("1x  13 px", "zoom 1", z === 1 ? "on" : "") + btn("1.5x  20 px", "zoom 1.5", z === 1.5 ? "on" : "") + btn("2x  26 px", "zoom 2", z === 2 ? "on" : "") + `<span class="m">pixel fonts are only sharp at these</span>`],
+    ["Height", `${h} (${Math.round(h * 100)} %)`, btn("-", `height ${Math.max(0.25, r2(h - 0.05))}`) + btn("+", `height ${Math.min(0.9, r2(h + 0.05))}`) + btn("reload", "reload") + `<span class="m">reload = read the ini again</span>`],
+  ];
+  const last = [...st.logs].reverse().find(l => l && !l.startsWith("> ")) || "";
+  $("uv").innerHTML = `<div><span class="hd">SETTINGS</span> <span class="m">| Up/Down or wheel: select | Enter: apply the line | buttons: same commands | ?: keys</span></div>
+  <table>${rows.map(([k, v, b], i) => `<tr class="${i === uv.sel ? "sel" : ""}" data-i="${i}"><td class="k">${i === uv.sel ? "&gt; " : "&nbsp;&nbsp;"}${k}</td><td class="v">${esc(v)}</td><td><span class="row">${b}</span></td></tr>`).join("")}</table>
+  <div class="hd">IN USE</div>
+  <div class="tx">Font: ${z === 1.5 ? "ProggyTiny, 10 px design" : "ProggyClean, 13 px design"} at ${fsz()} px | spacing x${z} | console height ${Math.round(h * 100)} % of the screen</div>
+  <div class="m">File: WindroseClient.ini in %LOCALAPPDATA%\\WindroseClient (mock values on this page)</div>
+  <div class="hd">PREVIEW</div>
+  <div class="l-cmd">&gt; /connect open #1</div><div class="l-server">[Server] Windrose+ 1.3.21 | 3 players online</div><div class="l-text">[Info] Connecting to Example Harbor (192.0.2.10:7777) ...</div>
+  <div class="l-notice">[Notice] Command catalog updated (64 commands available).</div><div class="l-error">[Error] No server matches "harbr".</div><div class="l-banner">===============================================</div>
+  <div class="row"><button class="chip">All</button><button class="chip on">Favorites</button><button class="chip">Recent</button><span class="m">&lt;- filter chips (the chosen one is seafoam)</span></div>
+  <div class="row"><button class="btn">Copy address</button><button class="btn fav">Favorite</button><button class="btn del">Unfavorite</button><button class="btn del">Remove</button><button class="btn del warn">Confirm remove</button><button class="btn go">Connect</button></div>
+  <div class="m">hover: neutral gold | favorite amber | destructive red | primary / chosen bright seafoam | armed red</div>
+  <div class="row"><span class="l-cmd">/connect &gt;</span><input value="open #1" aria-label="Sample line" style="background:var(--c-frame);color:var(--c-input);border:1px solid var(--c-border);font:inherit;padding:0 6px;width:14em"><span style="color:rgba(95,99,110,.55)">/connect &gt; open #1</span><span class="m">&lt;- line, and dimmed while another field has the keyboard</span></div>
+  <div><span class="l-cmd">USAGE:</span> <span class="tx">open &lt;#n|name|ip[:port]&gt; [password]</span> <span class="m">- Join a server (ESC to hide)</span></div>
+  <table class="tbl" style="width:auto"><thead><tr><th>#</th><th>Name</th><th>Address</th><th>Last played</th></tr></thead><tbody><tr class="sel"><td class="no">&gt; 1</td><td class="nm">Example Harbor</td><td>192.0.2.10:7777</td><td class="tx">2 h ago</td></tr><tr><td>&nbsp;&nbsp;2</td><td class="nm">Driftwood Isles</td><td>198.51.100.42:7777</td><td class="tx">9 d ago</td></tr></tbody></table>
+  <div class="${logClass(last)}">${esc(last)}</div>`;
+}
+
+const NAV = [
+  ["Console", "F10 open / close  |  Esc closes help, a menu, the password field, suggestions, then the console"],
+  ["Help", "? on an empty command line: this list"],
+  ["Line", "Enter run  |  Tab complete / cycle  |  Right accept a suggestion"],
+  ["Lists", "Up/Down or wheel: select (/connect, /ui)  |  double-click connect  |  right-click: row menu"],
+  ["History", "Shift+Up/Down or Shift+wheel: lines you ran (in /wp and /info plain Up/Down too)"],
+  ["Scroll", "Ctrl+wheel: scroll the view (all tabs)  |  Page Up/Down: one page (in /connect: the selection)  |  Ctrl+Home/End: top / bottom"],
+  ["Editing", "Home/End  |  Shift+Home/End select  |  Ctrl+Left/Right word  |  Ctrl+A all  |  Ctrl+C/X/V  |  Ctrl+Z/Y"],
+  ["", "Shift+Del: cut the line (no selection: all of it)  -  ImGui's own text field keys"],
+  ["Contexts", "/wp  /connect  /ui  /info  /update  (tabs or typed)  |  /quit closes the game"],
+];
+const navRows = () => NAV.map(([k, v]) => `<div><span class="m">${(k || "").padEnd(10, " ").replace(/ /g, "&nbsp;")}</span><span class="tx">${esc(v)}</span></div>`).join("");
+// ---------- /info view (RenderInfoView) ----------
+const ROSE = ["    N    ", "    |    ", "W --+-- E", "    |    ", "    S    "];
+const WORD = ["__        __ ___  _   _  ____   ____    ___   ____   _____", "\\ \\      / /|_ _|| \\ | ||  _ \\ |  _ \\  / _ \\ / ___| | ____|   _", " \\ \\ /\\ / /  | | |  \\| || | | || |_) || | | |\\___ \\ |  _|   _| |_", "  \\ V  V /   | | | |\\  || |_| ||  _ < | |_| | ___) || |___ |_   _|", "   \\_/\\_/   |___||_| \\_||____/ |_| \\_\\ \\___/ |____/ |_____|  |_|"];
+function renderInfo() {
+  const c = S.client || {}, z = fsz() / 13, h = S.ui.height_fraction, px = 1080;
+  const row = (k, v, cls = "tx") => `<div><span class="m">${k.padEnd(12, " ").replace(/ /g, "&nbsp;")}</span><span class="${cls}">${v}</span></div>`;
+  $("iv").innerHTML = `<div style="display:flex;gap:3ch;white-space:pre"><div class="l-cmd">${ROSE.map(esc).join("\n")}</div><div class="l-server">${WORD.map(esc).join("\n")}</div></div>
+  <div class="m">In-game console for Windrose: Windrose+ commands, a Direct IP server manager, console settings.</div><div class="c-sep"></div>` +
+    row("Author", "Lycano", "tx") + row("Repository", "github.com/lycano/windrose-plus-client", "l-cmd") +
+    row("Version", `Client proxy v${esc((c.version || "?").split("+")[0])} &nbsp;|&nbsp; protocol 1 &nbsp;|&nbsp; commit ${esc(c.commit ? c.commit.hash : "?")} &nbsp;|&nbsp; built ${esc(c.build ? c.build.mtime.slice(0, 10) : "?")} &nbsp;|&nbsp; Dear ImGui 1.92.1`) +
+    row("Loader", `version.dll v${esc(c.version || "?")} &nbsp;|&nbsp; client files: C:\\users\\...\\AppData\\Local\\WindroseClient`) +
+    row("Settings", "C:\\users\\...\\AppData\\Local\\WindroseClient\\WindroseClient.ini &nbsp;(read)") +
+    row("&nbsp;&nbsp;zoom", `${zoomOf()} &nbsp;-&gt;&nbsp; ${fsz()} px text, spacing x${zoomOf()} &nbsp;(${zoomOf() === 1.5 ? "ProggyTiny, 10 px design" : "ProggyClean, 13 px design"}; sharp steps 13 / 20 / 26 px)`) +
+    row("&nbsp;&nbsp;height", `${h} &nbsp;-&gt;&nbsp; the console covers ${Math.round(h * 100)} % of the screen (${Math.round(h * px)} of ${px} px)`) +
+    row("ImGui file", "...\\WindroseClient_imgui.ini &nbsp;(ImGui's own window state)") +
+    row("Display", "game image 1920x1080 | window 1920x1080 | monitor 1920x1080 | display scaling 100 % (the game handles it) &nbsp;(mock)") +
+    row("&nbsp;&nbsp;sharpness", "1:1, the pixel fonts can be sharp", "l-cmd") +
+    row("Servers", "WindroseClient_servers.tsv in the client files folder (/connect)") +
+    `<div class="l-server" style="margin-top:.6em">NAVIGATION</div>` + navRows();
+}
+
+// ---------- /update view (RenderUpdateView) ----------
+// Mock state: no server hint until a server answers; the page downloads nothing
+const upd = { last: "" };
+function renderUpdate() {
+  const c = S.client || {}, v = (c.version || "?").split("+")[0];
+  const row = (k, val, cls = "tx") => `<div><span class="m">${k.padEnd(12, " ").replace(/ /g, "&nbsp;")}</span><span class="${cls}">${val}</span></div>`;
+  $("updv").innerHTML = `<div><span class="l-server">CLIENT UPDATE</span> <span class="m">| install / refresh / rollback: type or click | the new version starts with the next game start | ?: keys</span></div><div class="c-sep"></div>` +
+    row("This client", `v${esc(v)} &nbsp;|&nbsp; protocol 1 &nbsp;|&nbsp; commit ${esc(c.commit ? c.commit.hash : "?")}`, "tx") +
+    row("Loader", `version.dll v${esc(c.version || "?")} &nbsp;|&nbsp; ABI 1`) +
+    row("Rollback to", "none (no earlier version installed)", "m") +
+    row("Next start", "no change", "m") +
+    `<div style="height:.5em"></div>` +
+    row("Server", "no update information yet (join a server whose client-console sends it)", "m") +
+    row("Status", "unknown", "m") +
+    (upd.last ? row("Last", esc(upd.last), upd.last.startsWith("[Error]") ? "l-error" : "tx") : "") +
+    `<div style="margin-top:.6em"><button class="btn go" disabled>Install update</button> <button class="btn" data-u="refresh">Refresh</button> <button class="btn del" disabled>Roll back</button></div>`;
+}
+
+// ---------- rendering ----------
+const COLS = [[0, "#", 1], [1, "*", 0], [2, "Name", 1], [3, "Address", 1], [4, "Password", 0], [5, "Last played", 1]];
+function renderServers() {
+  sv.rows = snapshot();
+  const favs = sv.rows.filter(r => r.fav).length;
+  sv.view = sv.rows.map((r, i) => i).filter(i => sv.filter === 0 || (sv.filter === 1) === sv.rows[i].fav);
+  const key = r => sv.sortCol === 2 ? r.name : sv.sortCol === 3 ? r.endpoint : sv.sortCol === 5 ? r.last : r.n;
+  sv.view.sort((a, b) => { const x = key(sv.rows[a]), y = key(sv.rows[b]); const c = x < y ? -1 : x > y ? 1 : 0; return sv.asc ? c : -c; });
+  document.querySelectorAll(".chip").forEach(c => c.classList.toggle("on", +c.dataset.f === sv.filter));
+  $("svcount").textContent = `| ${sv.view.length} shown | ${favs} favorites | ${sv.rows.length - favs} recent | Direct IP`;
+  $("thead").innerHTML = COLS.map(([id, l, sortable]) => `<th class="${sortable ? "" : "ns"}" data-c="${sortable ? id : ""}">${l}${sv.sortCol === id ? (sv.asc ? " ^" : " v") : ""}</th>`).join("");
+  $("tbody").innerHTML = sv.view.map(i => { const r = sv.rows[i], on = r.endpoint === sv.sel;
+    return `<tr class="${on ? "sel" : ""}" data-e="${esc(r.endpoint)}"><td class="no">${on ? "&gt; " : "&nbsp;&nbsp;"}${r.n}</td><td class="${r.fav ? "fav" : ""}">${r.fav ? "*" : "-"}</td><td class="nm">${esc(r.name)}</td><td>${esc(r.endpoint)}</td><td class="${r.pw ? "tx" : ""}">${r.pw ? "stored" : "-"}</td><td class="tx">${agoS(r.last)}</td></tr>`; }).join("")
+    || `<tr><td></td><td></td><td colspan="4">${sv.rows.length ? "No server in this filter." : "No servers yet: add &lt;ip[:port]&gt; [name], or join once through Find Servers &gt; Direct IP."}</td></tr>`;
+  $("tbody").querySelector("tr.sel")?.scrollIntoView({ block: "nearest" });
+  const last = [...st.logs].reverse().find(l => l && !l.startsWith("> ")) || "";
+  $("svstatus").className = "sv-status " + logClass(last); $("svstatus").textContent = last;
+  const r = sv.rows.find(x => x.endpoint === sv.sel);
+  if (sv.pw && sv.pwFor !== sv.sel) { sv.pw = false; $("svpwin").value = ""; } // another server got selected
+  if (!r) { $("svdet").innerHTML = `<span class="m">No server selected.</span>`; sv.pw = false; }
+  else $("svdet").innerHTML = `<span class="k">${esc(r.name)}</span><span class="v">${esc(r.endpoint)}</span><span class="m">| #${r.n} | last played ${agoS(r.last)}${r.pw ? " | password stored" : ""}</span><span class="sp"></span>` +
+    `<button class="btn ${r.fav ? "del" : "fav"}" data-a="fav">${r.fav ? "Unfavorite" : "Favorite"}</button><button class="btn" data-a="copy">Copy address</button><button class="btn" data-a="pw">Password</button><button class="btn del${sv.armed === r.endpoint ? " warn" : ""}" data-a="rm">${sv.armed === r.endpoint ? "Confirm remove" : "Remove"}</button><button class="btn go" data-a="open">Connect</button>`;
+  $("svpw").classList.toggle("off", !(sv.pw && r)); if (r) $("svpwl").textContent = `Password for ${r.name}:`;
+  $("svpwin").type = sv.pwShow ? "text" : "password"; $("svpwshow").textContent = sv.pwShow ? "Hide" : "Show";
+  $("svpwclr").hidden = !(r && r.pw);
+}
+function renderLog(scroll) {
+  const el = $("clog");
+  el.innerHTML = st.logs.map(l => `<div class="${logClass(l)}">${esc(l)}</div>`).join("");
+  if (scroll) el.scrollTop = el.scrollHeight;
+}
+function render() {
+  $("console").classList.toggle("open", st.open);
+  $("console").style.height = (S.ui.height_fraction * 100) + "%";
+  $("console").style.setProperty("--c-font-size", (st.fontSize || S.ui.font_size || 16) + "px");
+  const pal = $("cpal"); pal.hidden = !(st.pal && st.matches.length);
+  if (!pal.hidden) {
+    const parents = new Set(st.matches.map(ci => isSub(st.cat[ci]) ? st.cat[ci].name.split(" ")[0] : "\u0000" + ci));
+    const title = st.context ? st.context.toUpperCase() + " COMMANDS"
+      : parents.size === 1 && isSub(st.cat[st.matches[0]]) ? st.cat[st.matches[0]].name.split(" ")[0].toUpperCase() + " SUBCOMMANDS" : "COMMAND DIRECTORY";
+    pal.innerHTML = `<div class="ph"><b>${esc(title)} (${st.matches.length} available)</b> <i>| Tab: cycle | Right Arrow / Click: select | Esc: close</i></div><div class="c-sep"></div>` +
+      st.matches.map((ci, i) => { const c = st.cat[ci]; const sel = i === st.pidx, sub = isSub(c);
+        const shown = sub ? c.name.slice(c.name.indexOf(" ") + 1) : c.name;
+        const n = sub ? 0 : st.cat.filter(o => o.name.startsWith(c.name + " ")).length;   // "+N": has subcommands
+        const mid = n ? `<span class="plus">+${n}</span>` : `<span class="u">${esc(c.usage)}</span>`;
+        return `<div class="row${sel ? " sel" : ""}${sub ? " sub" : ""}" data-i="${ci}"><span class="n">${sel ? "&gt; " : "&nbsp;&nbsp;"}${esc(shown)}</span> ${mid}${c.desc ? ` <span class="d">- ${esc(c.desc)}</span>` : ""}</div>`; }).join("");
+    pal.querySelector(".row.sel")?.scrollIntoView({ block: "center" });
+  }
+  const syn = $("csyn"); const c = st.cat[st.syn]; syn.hidden = !(c && !st.synDismissed);
+  if (!syn.hidden) syn.innerHTML = `<span class="k">USAGE:</span> <span class="u">${esc(fullUsage(c))}</span>${c.desc ? ` <span class="d">- ${esc(c.desc)}</span>` : ""} <span class="x">(ESC to hide)</span>`;
+  $("cscan").hidden = !st.exec;
+  $("cdot").classList.toggle("busy", st.exec);
+  const servers = st.context === "/connect";
+  const uiv = st.context === "/ui", inf = st.context === "/info", updc = st.context === "/update";
+  $("clog").hidden = servers || uiv || inf || updc; $("sv").hidden = !servers; $("uv").hidden = !uiv; $("iv").hidden = !inf; $("updv").hidden = !updc;
+  $("tabInfo").classList.toggle("on", inf); if (inf) renderInfo();
+  $("tabUpd").classList.toggle("on", updc); if (updc) renderUpdate();
+  $("tabWp").classList.toggle("on", !st.context); $("tabSv").classList.toggle("on", servers); $("tabUi").classList.toggle("on", uiv);
+  if (servers) renderServers();
+  if (uiv) renderUi();
+  $("cprompt").textContent = st.context ? st.context + " >" : ">";
+  document.querySelector(".c-input").classList.toggle("dim", servers && sv.pw && document.activeElement !== cin);
+  $("cdot").title = st.exec ? "Command executing on server..." : "Server connected & ready.";
+  $("burger").classList.toggle("on", st.pal);
+}
+
+// ---------- input handling (InputCallback equivalents) ----------
+const cin = $("cin");
+cin.addEventListener("input", () => {
+  const { tok, space } = token(cin.value);
+  if (space) { // after "<command> ": its subcommands; the space right after such a command opens the palette
+    const was = st.pal; filter(cin.value); st.pal = st.matches.length > 0 && (was || cin.value.endsWith(" ")); if (st.pal && !was) st.pidx = 0;
+  } else if (st.pal) filter(tok);
+  st.hpos = -1; matchSyntax();
+  if (st.context === "/connect") { const i = targetRow(snapshot(), cin.value); if (i >= 0) sv.sel = snapshot()[i].endpoint; } // typing a target jumps to it
+  if (st.context === "/ui") { const k = cin.value.trim().split(/\s+/)[0].toLowerCase(), i = ["zoom", "height"].indexOf(k); if (i >= 0) uv.sel = i; }
+  render();
+});
+cin.addEventListener("keydown", e => {
+  if (e.key === "?" && cin.value === "") { e.preventDefault(); $("help").hidden = false; $("helpdim").hidden = false; return; } // help overlay (modal)
+  const { tok, space } = token(cin.value);
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const atSub = space && !st.pal && (filter(cin.value), st.matches.length > 0); // still at a subcommand: complete like commands
+    if (space && !st.pal && !atSub) { const i = longestMatch(cin.value); if (i >= 0) { st.syn = i; st.synDismissed = false; } st.pal = false; }
+    else if (!st.pal) { filter(space ? cin.value : tok); st.pal = true; st.pidx = 0; st.synDismissed = false; if (st.matches.length) { setInput(st.cat[st.matches[0]].name); st.syn = st.matches[0]; } }
+    else cycle(1);
+    render();
+  } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    e.preventDefault(); const up = e.key === "ArrowUp";
+    // Up/Down = the list in /connect and /ui (like the wheel); Shift+Up/Down = history (plain too in /wp, /info)
+    if (!e.shiftKey && st.context === "/ui" && !st.pal) moveUi(up ? -1 : 1);
+    else if (!e.shiftKey && st.context === "/connect" && !st.pal) moveSel(up ? -1 : 1);
+    else if (st.pal && st.matches.length && !e.shiftKey) cycle(up ? -1 : 1);
+    else {
+      const prev = st.hpos;
+      if (up) st.hpos = st.hpos === -1 ? st.hist.length - 1 : Math.max(0, st.hpos - 1);
+      else if (st.hpos !== -1 && ++st.hpos >= st.hist.length) st.hpos = -1;
+      if (prev !== st.hpos) setInput(st.hpos >= 0 ? st.hist[st.hpos] : "");
+      matchSyntax();
+    }
+    render();
+  } else if (e.key === "ArrowRight" && cin.selectionStart === cin.value.length) {
+    if (st.pal && st.matches.length) { e.preventDefault(); selectCmd(st.matches[st.pidx]); }
+    else if (st.syn >= 0 && cin.value && !cin.value.includes(" ")) { e.preventDefault(); setInput(cin.value + " "); st.synDismissed = false; render(); }
+  } else if (e.key === "PageUp" || e.key === "PageDown" || (e.ctrlKey && (e.key === "Home" || e.key === "End"))) {
+    // Page keys: /connect pages the selection, the other views scroll; Ctrl+Home / Ctrl+End: top / bottom (first / last row)
+    e.preventDefault(); const down = e.key === "PageDown" || e.key === "End", far = e.key === "Home" || e.key === "End";
+    if (st.context === "/connect") { const page = Math.max(1, Math.floor($("tblwrap").clientHeight / ($("tbody").rows[0]?.offsetHeight || 20)) - 2); moveSel((down ? 1 : -1) * (far ? 1e6 : page)); render(); }
+    else { const el = st.context === "/ui" ? $("uv") : st.context === "/info" ? $("iv") : st.context === "/update" ? $("updv") : $("clog"); el.scrollTop = far ? (down ? el.scrollHeight : 0) : el.scrollTop + (down ? 1 : -1) * Math.max(20, el.clientHeight - 40); }
+  } else if (e.key === "Enter") { e.preventDefault(); execute(); }
+  else if (e.key === "Escape") {
+    e.preventDefault();
+    if (st.pal) st.pal = false; else if (st.syn >= 0 && !st.synDismissed) st.synDismissed = true; else st.open = false; // input stays cached
+    render();
+  }
+});
+$("cpal").addEventListener("click", e => { const r = e.target.closest(".row"); if (r) selectCmd(+r.dataset.i); });
+$("cpal").addEventListener("wheel", e => { e.preventDefault(); cycle(e.deltaY > 0 ? 1 : -1); render(); }, { passive: false });
+$("burger").addEventListener("click", () => {
+  if (st.pal) st.pal = false;
+  else { const { tok, space } = token(cin.value); filter(!space ? tok : ""); if (!st.matches.length) filter(""); st.pal = true; st.pidx = 0; }
+  cin.focus(); render();
+});
+$("tabWp").addEventListener("click", () => { if (st.context) { runLine("/wp"); setInput(""); render(); } cin.focus(); });       // a context switch starts with an empty line
+$("tabSv").addEventListener("click", () => { if (st.context !== "/connect") { runLine("/connect"); setInput(""); render(); } cin.focus(); });
+document.querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => { sv.filter = +c.dataset.f; render(); cin.focus(); }));
+$("thead").addEventListener("click", e => { const th = e.target.closest("th"); if (!th || th.dataset.c === "") return; const c = +th.dataset.c; sv.asc = sv.sortCol === c ? !sv.asc : true; sv.sortCol = c; render(); });
+const rowOf = e => { const tr = e.target.closest("tr[data-e]"); return tr ? sv.rows.find(r => r.endpoint === tr.dataset.e) : null; };
+$("tbody").addEventListener("click", e => { const r = rowOf(e); if (r) { selectRow(r); render(); cin.focus(); } });
+$("tbody").addEventListener("dblclick", e => { const r = rowOf(e); if (r) runLine("/connect open #" + r.n); });
+$("screen").addEventListener("wheel", e => {
+  if (st.pal || !$("ctxm").hidden) return;
+  if (e.shiftKey) { // Shift+wheel = history in every tab
+    e.preventDefault(); const prev = st.hpos, up = e.deltaY < 0;
+    if (up) st.hpos = st.hpos === -1 ? st.hist.length - 1 : Math.max(0, st.hpos - 1); else if (st.hpos !== -1 && ++st.hpos >= st.hist.length) st.hpos = -1;
+    if (prev !== st.hpos) setInput(st.hpos >= 0 ? st.hist[st.hpos] : ""); return;
+  }
+  if (e.ctrlKey) { // Ctrl+wheel: scroll the view in every tab, the selection stays
+    e.preventDefault(); const el = st.context === "/connect" ? $("tblwrap") : st.context === "/ui" ? $("uv") : st.context === "/info" ? $("iv") : st.context === "/update" ? $("updv") : $("clog");
+    el.scrollTop += (e.deltaY > 0 ? 1 : -1) * 3 * 22; return;
+  }
+  if (st.context === "/connect") { e.preventDefault(); moveSel(e.deltaY > 0 ? 1 : -1); render(); }
+  else if (st.context === "/ui") { e.preventDefault(); moveUi(e.deltaY > 0 ? 1 : -1); render(); }
+  else { e.preventDefault(); const el = st.context === "/info" ? $("iv") : st.context === "/update" ? $("updv") : $("clog"); el.scrollTop += (e.deltaY > 0 ? 1 : -1) * 3 * 22; } // /wp, /info: scroll anywhere (ScrollRegion)
+}, { passive: false }); // anywhere, like the palette
+$("tabUi").addEventListener("click", () => { if (st.context !== "/ui") { runLine("/ui"); setInput(""); render(); } cin.focus(); });
+$("tabInfo").addEventListener("click", () => { if (st.context !== "/info") { runLine("/info"); setInput(""); render(); } cin.focus(); });
+$("updv").addEventListener("click", e => { const b = e.target.closest("[data-u]"); if (b) { runLine("/update " + b.dataset.u); cin.focus(); } });
+$("tabUpd").addEventListener("click", () => { if (st.context !== "/update") { runLine("/update"); setInput(""); render(); } cin.focus(); });
+$("uv").addEventListener("click", e => {
+  const b = e.target.closest("[data-l]"); if (b) { runLine("/ui " + b.dataset.l); cin.focus(); return; }
+  const tr = e.target.closest("tr[data-i]"); if (tr) { uv.sel = +tr.dataset.i; setInput(uiLine(uv.sel)); render(); cin.focus(); }
+});
+function svAction(a, r) {
+  $("ctxm").hidden = true; if (!r) return;
+  if (a === "open") runLine("/connect open #" + r.n);
+  if (a === "fav") runLine("/connect fav #" + r.n);
+  if (a === "remove") runLine("/connect remove #" + r.n);
+  if (a === "copy") { try { navigator.clipboard.writeText(r.endpoint).catch(() => {}); } catch (_) {} addLog(`[Info] ${r.endpoint} copied.`); }
+  if (a === "pw") { if (sv.pw) closePw(); else openPw(r, false); return; }
+  if (a === "clearpw") runLine("/connect pass #" + r.n + " -");
+  if (a === "rm") { // Remove needs a second click within 4 s
+    if (sv.armed === r.endpoint) { sv.armed = ""; runLine("/connect remove #" + r.n); }
+    else { sv.armed = r.endpoint; clearTimeout(sv.armTimer); sv.armTimer = setTimeout(() => { sv.armed = ""; render(); }, 4000); render(); }
+    return;
+  }
+  render(); cin.focus();
+}
+// Right click: the row menu (back on user request 2026-10-18), entries colored by role on hover like the buttons
+$("tbody").addEventListener("contextmenu", e => {
+  const r = rowOf(e); if (!r) return; e.preventDefault(); selectRow(r); render();
+  const box = $("console").getBoundingClientRect(), m = $("ctxm");
+  m.innerHTML = `<div class="go" data-a="open">Connect</div><div class="${r.fav ? "del" : "fav"}" data-a="fav">${r.fav ? "Remove from favorites" : "Add to favorites"}</div><div data-a="copy">Copy address</div><div data-a="pw">${r.pw ? "Edit password" : "Set password"}</div>${r.pw ? `<div class="del" data-a="clearpw">Clear password</div>` : ""}<div class="sepl"></div><div class="del" data-a="remove">Forget this server</div>`;
+  m.style.left = Math.min(e.clientX - box.left, box.width - 200) + "px"; m.style.top = Math.min(e.clientY - box.top, box.height - 130) + "px"; m.hidden = false;
+});
+const selRow = () => sv.rows.find(r => r.endpoint === sv.sel);
+$("ctxm").addEventListener("click", e => { const d = e.target.closest("[data-a]"); if (d) svAction(d.dataset.a, selRow()); });
+$("svdet").addEventListener("click", e => { const b = e.target.closest("[data-a]"); if (b) svAction(b.dataset.a, selRow()); });
+document.addEventListener("click", e => { if (!e.target.closest("#ctxm")) $("ctxm").hidden = true; });
+function storePw(what) { const r = selRow(); if (r && what) runLine(`/connect pass #${r.n} ${what === "clear" ? "-" : ($("svpwin").value || "-")}`); closePw(); }
+$("svpwok").addEventListener("click", () => storePw("store"));
+$("svpwclr").addEventListener("click", () => storePw("clear"));
+$("svpwno").addEventListener("click", () => storePw(null));
+$("svpwshow").addEventListener("click", () => { sv.pwShow = !sv.pwShow; render(); $("svpwin").focus(); });
+$("svpwin").addEventListener("keydown", e => { if (e.key === "Enter") storePw("store"); if (e.key === "Escape") { e.stopPropagation(); storePw(null); } });
+// focus moves between the command line and the field: redraw the dim state
+for (const el of [cin, $("svpwin")]) { el.addEventListener("focus", () => render()); el.addEventListener("blur", () => setTimeout(render, 0)); }
+// A click that hits no clickable item gives the keyboard back to the command line (console_ui.cpp focus rule)
+$("console").addEventListener("mouseup", e => { if (!e.target.closest("button, input, tr[data-e], tr[data-i], .row, #ctxm, #cpal, .chip, .tab, th")) cin.focus(); });
+function toggle() { st.open = !st.open; render(); if (st.open) setTimeout(() => cin.focus(), 140); }
+$("bToggle").addEventListener("click", toggle);
+document.addEventListener("keydown", e => { if (e.key === "F10") { e.preventDefault(); toggle(); } });
+$("bExec").addEventListener("click", () => setExec(!st.exec));
+$("bNotice").addEventListener("click", () => addLog("[Notice] Server restarts in 5 minutes."));
+$("bError").addEventListener("click", () => addLog("[Error] Access denied: wp.x needs an admin AccountId."));
+$("bClear").addEventListener("click", () => { st.logs = []; S.ui.banner.forEach(addLog); });
+
+// ---------- catalogs ----------
+// AppendViewSubcommands: the view lists become "/connect open", "/ui zoom", "/update install" in the main console
+function viewSubs(command, view) {
+  return (view || []).filter(e => e.name && !e.name.startsWith("/"))
+    .map(e => ({ name: command + " " + e.name, usage: e.usage.startsWith(e.name) ? e.usage.slice(e.name.length).trim() : e.usage, desc: e.desc }));
+}
+function withViewSubs(list) {
+  const out = [];
+  for (const c of list) {
+    out.push(c);
+    if (c.name === "/connect") out.push(...viewSubs("/connect", S.ui.connect_catalog));
+    if (c.name === "/ui") out.push(...viewSubs("/ui", S.ui.ui_catalog));
+    if (c.name === "/update") out.push(...viewSubs("/update", S.ui.update_catalog));
+  }
+  return out;
+}
+S.ui.default_catalog = withViewSubs(S.ui.default_catalog);
+const catalogs = { offline: { label: "Catalog: offline (built-in)", list: S.ui.default_catalog } };
+const LOCAL = S.ui.default_catalog.filter(c => c.name.startsWith("/"));
+if (S.schema) {
+  S.schema.commands = [...S.schema.commands, ...LOCAL];
+  catalogs.admin = { label: `Catalog: ${S.schema.node} · admin (${S.schema.commands.length})`, list: S.schema.commands };
+  const pub = S.schema.commands.filter(c => PUBLIC.has(c.name));
+  catalogs.public = { label: `Catalog: ${S.schema.node} · public (${pub.length})`, list: pub };
+}
+const sel = $("selCat");
+sel.innerHTML = Object.entries(catalogs).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
+sel.value = S.schema ? "admin" : "offline";
+sel.addEventListener("change", () => { st.serverCat = catalogs[sel.value].list; if (!st.context) switchContext(""); render(); }); // UpdateCommandCatalog
+st.serverCat = catalogs[sel.value].list; st.cat = st.serverCat;
+
+// ---------- status board ----------
+function ago(iso) { if (!iso) return ""; const d = (Date.now() - new Date(iso)) / 36e5; return d < 1 ? `${Math.round(d * 60)} min ago` : d < 48 ? `${Math.round(d)} h ago` : `${Math.round(d / 24)} d ago`; }
+function commit(c) { return c ? `<span class="mono">${esc(c.hash)}</span> <span class="dim">${esc(ago(c.date))}</span><br><span class="dim">${esc(c.subject)}</span>` : "—"; }
+function board() {
+  const c = S.client, a = S.addon, b = c.build;
+  const install = c.local_install === "UP-TO-DATE" ? `<span class="pill ok">up to date</span>` : c.local_install ? `<span class="pill warn">${esc(c.local_install)}</span>` : `<span class="dim">unknown</span>`;
+  const build = !b ? `<span class="pill bad">no build</span>` : b.older_than_source ? `<span class="pill warn">older than source</span>` : `<span class="pill ok">current</span>`;
+  const nodes = Object.entries(a.enabled_on || {}).map(([n, on]) => `<span class="pill ${on ? "ok" : "dim"}">${esc(n.replace("-server", ""))} ${on ? "on" : "off"}</span>`).join(" ");
+  const dirty = (list) => list && list.length ? `<span class="pill warn">${list.length} uncommitted</span>` : `<span class="pill ok">clean</span>`;
+  const pillFor = s => s === "done" ? `<span class="pill ok">done</span>` : s === "in-progress" ? `<span class="pill warn">testing</span>` : `<span class="pill dim">open</span>`;
+  const wp = S.workplan || [];
+  const counts = { done: wp.filter(i => i.state === "done").length, prog: wp.filter(i => i.state === "in-progress").length, open: wp.filter(i => i.state === "open").length };
+  const drift = (S.ui.palette || []).filter(p => !p.in_code);
+  $("board").innerHTML = `
+  <div class="card"><h2>Client · version.dll (loader) + WindroseClient.dll</h2>
+    <div class="big">v${esc(c.version)}</div>
+    <dl class="kv"><dt>Source</dt><dd>${commit(c.commit)}</dd>
+    <dt>Tree</dt><dd>${esc(c.branch)} · ${dirty(c.dirty)}</dd>
+    <dt>Build</dt><dd>${build} <span class="dim">${esc(b ? b.mtime.replace("T", " ") : "")}</span></dd>
+    <dt>Local game</dt><dd>${install}</dd></dl></div>
+  <div class="card"><h2>Server add-on · client-console</h2>
+    <div class="big">v${esc(a.version)}</div>
+    <dl class="kv"><dt>Source</dt><dd>${commit(a.commit)}</dd>
+    <dt>Tree</dt><dd>${dirty(a.dirty)}</dd>
+    <dt>Enabled</dt><dd>${nodes || "—"}</dd>
+    <dt>Schema</dt><dd>${S.schema ? `${S.schema.commands.length} commands live from ${esc(S.schema.node)}` : `<span class="dim">not fetched (--schema NODE)</span>`}</dd></dl></div>
+  <div class="card wide"><h2>Workplan K · ${counts.done} done · ${counts.prog} in test · ${counts.open} open</h2>
+    <ul class="items">${wp.map(i => `<li${i.level ? ` class="sub" style="padding-left:${i.level * 1.2}em"` : ""}><span class="id">${esc(i.id)}</span>${pillFor(i.state)}<span>${esc(i.title)}${i.note ? `<br><span class="note">${esc(i.note)}</span>` : ""}</span></li>`).join("") || `<li><span class="dim">no workplan data</span></li>`}</ul></div>
+  <div class="card wide"><h2>Palette · README vs console_ui.cpp ${drift.length ? `<span class="pill warn">${drift.length} drift</span>` : `<span class="pill ok">in sync</span>`}</h2>
+    <div class="sw">${(S.ui.palette || []).map(p => `<div title="${esc(p.hex)}"><span class="chip" style="background:${esc(p.hex)}"></span><span class="r">${esc(p.role)} <span class="mono dim">${esc(p.hex)}</span>${p.in_code ? "" : ` <span class="warn">✕</span>`}</span></div>`).join("")}</div></div>`;
+}
+
+$("help").innerHTML = `<div><span class="l-server">NAVIGATION</span> <span class="m">| Esc or a click elsewhere closes this</span></div><div class="c-sep"></div>` + navRows();
+const closeHelp = () => { $("help").hidden = true; $("helpdim").hidden = true; cin.focus(); }; // closed: the line gets the keyboard back
+document.addEventListener("keydown", e => { if (!$("help").hidden && (e.key === "Escape" || e.key === "?")) { e.preventDefault(); e.stopPropagation(); closeHelp(); } }, true);
+document.addEventListener("click", e => { if (!$("help").hidden && !e.target.closest("#help")) closeHelp(); });
+// ---------- boot ----------
+// Board preview = the client's defaults since 2026-10-18 (the user's own settings): zoom 1.5 (20 px), 65 % high
+st.fontSize = 20;
+S.ui.height_fraction = 0.65;
+$("ctitle").textContent = S.ui.title; $("chint").textContent = S.ui.hint;
+$("stamp").textContent = S.generated ? `state ${S.generated.replace("T", " ")}` : "sample state (template not rendered)";
+if (S.proposal) { $("proposal").hidden = false; $("proposal").textContent = "Proposal: " + S.proposal; }
+S.ui.banner.forEach(addLog);
+addLog("[Info] Mockup: answers are simulated; the catalog and strings come from the current source.");
+if (S.public) $("board").hidden = true; else board(); render(); // public showcase: no internal status board
+</script>
+
+</body>
+</html>
