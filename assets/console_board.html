@@ -47,6 +47,11 @@ body {
   padding-block: 20px 40px;
 }
 .wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 22px; }
+/* public showcase (S.public): the game screen fills the window, so every zoom level (13 / 20 / 26 px) has room */
+body.full { padding-block: 10px; }
+body.full .wrap { max-width: none; height: calc(100dvh - 20px); grid-template-rows: auto minmax(0, 1fr) auto; gap: 10px; }
+body.full .wrap > section:not(.board) { min-height: 0; }
+body.full .screen { aspect-ratio: auto; height: 100%; min-height: 360px; }
 header.top { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; }
 h1 { margin: 0; font-size: 1.55rem; font-weight: 600; letter-spacing: .01em; text-wrap: balance; }
 h1 span { color: var(--c-server); }
@@ -144,7 +149,7 @@ table.tbl { width: 100%; border-collapse: collapse; white-space: nowrap; }
 .dot.busy { animation: pulse .78s ease-in-out infinite alternate; }
 @keyframes pulse { from { background: #F59E0B; } to { background: #F5C60B; } }
 .prompt { color: var(--c-cmd); white-space: nowrap; }
-#cin { flex: 1; min-width: 0; height: 23px; background: var(--c-frame); color: var(--c-input); border: 1px solid var(--c-border); border-radius: 2px; font: inherit; padding: 0 6px; outline: none; }
+#cin { flex: 1; min-width: 0; height: calc(1.2em + 6px); /* follows the zoom (13 / 20 / 26 px) */ background: var(--c-frame); color: var(--c-input); border: 1px solid var(--c-border); border-radius: 2px; font: inherit; padding: 0 6px; outline: none; }
 #cin:focus { background: rgba(36,38,44,.95); }
 /* another input box has the keyboard: the command line is dim, no outline (console_ui.cpp dim_line) */
 .c-input.dim .prompt, .c-input.dim #cin { color: rgba(95,99,110,.55); }
@@ -435,7 +440,7 @@ function runLine(full) {
     if (!w[1] && st.context !== "/ui") { addLog("[Info] Console look: Up/Down or the wheel select a setting, edit the number, Enter applies; the buttons do the same. /wp goes back."); switchContext("/ui"); render(); return; }
     if (w[1] === "zoom" && (v === 1 || v === 1.5 || v === 2)) st.fontSize = v === 1.5 ? 20 : 13 * v;
     else if (w[1] === "height" && v >= 0.25 && v <= 0.9) S.ui.height_fraction = v;
-    else if (w[1] && w[1] !== "reload") { addLog("[Error] Usage: /ui [zoom 1|1.5|2 | height <0.25-0.9> | reload]  (pixel fonts are only sharp at 13, 20 or 26 px)"); render(); return; }
+    else if (w[1] && w[1] !== "reload") { addLog("[Error] Usage: /ui zoom <1|1.5|2> | /ui height <0.25-0.9> | /ui reload  (pixel fonts are only sharp at 13, 20 or 26 px)"); render(); return; }
     addLog(`[Info] Console: zoom ${zoomOf()} (${fsz()} px text, spacing x${zoomOf()}), height ${S.ui.height_fraction} (WindroseClient.ini)`);
   }
   else if (lowerFull.startsWith("/connect")) mockLocal(full).forEach(addLog);
@@ -807,5 +812,5 @@ $("stamp").textContent = S.generated ? `state ${S.generated.replace("T", " ")}` 
 if (S.proposal) { $("proposal").hidden = false; $("proposal").textContent = "Proposal: " + S.proposal; }
 S.ui.banner.forEach(addLog);
 addLog("[Info] Mockup: answers are simulated; the catalog and strings come from the current source.");
-if (S.public) $("board").hidden = true; else board(); render(); // public showcase: no internal status board
+if (S.public) { $("board").hidden = true; document.body.classList.add("full"); } else board(); render(); // public showcase: full window, no internal status board
 </script>
